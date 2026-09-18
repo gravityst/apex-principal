@@ -422,3 +422,41 @@ canvas.r3d {
 .carlabel.me .cn { color: #ffd39b; }
 .carlabel.pit { opacity: .6; }
 @media (max-width: 760px) { .carlabel { font-size: 9.5px; padding: 1px 5px; } }
+
+/* ---------- segmented control ---------- */
+
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: #0e1521; }
+.seg.tiny { transform: scale(.92); transform-origin: right center; }
+.segbtn {
+  background: none; border: 0; padding: 6px 13px; color: var(--ink-3);
+  font-size: 12px; font-weight: 700; letter-spacing: .02em;
+}
+.segbtn + .segbtn { border-left: 1px solid var(--line); }
+.segbtn.on { background: var(--accent-2); color: #01201a; }
+.segbtn:hover:not(.on) { color: var(--ink); }
+
+/* ---------- live telemetry ---------- */
+
+.telem {
+  margin-top: 11px; border: 1px solid var(--line-soft); border-radius: 8px;
+  padding: 8px 10px; background: #0e1521;
+}
+.trow { display: flex; align-items: center; gap: 9px; padding: 3px 0; font-size: 12.5px; }
+.trow + .trow { border-top: 1px solid rgba(26,37,54,.55); }
+.trow .tk {
+  font-size: 9px; letter-spacing: .14em; color: var(--ink-3); font-weight: 800;
+  min-width: 42px;
+}
+.trow .tv { font-weight: 650; font-variant-numeric: tabular-nums; }
+.trow.big .tv { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+.trow .drs {
+  margin-left: auto; font-size: 9.5px; font-weight: 800; letter-spacing: .12em;
+  color: #01201a; background: var(--accent-2); border-radius: 4px; padding: 2px 6px;
+}
+.secrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 7px; }
+.seccell {
+  display: flex; flex-direction: column; gap: 1px; align-items: center;
+  background: #131c2b; border: 1px solid var(--line-soft); border-radius: 5px; padding: 4px 2px;
+}
+.seccell.live { border-color: var(--accent); }
+.seccell .mono { font-size: 12.5px; font-weight: 650; }

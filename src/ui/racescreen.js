@@ -49,6 +49,15 @@ export function renderRaceScreen(app, root, race, round) {
   const stratSlot = h('div', { class: 'grid' });
   const towerSlot = h('div', { class: 'tower' });
   const radioSlot = h('div', { class: 'radio' });
+  const radioFilter = h('div', { class: 'seg tiny' },
+    h('button', { class: 'segbtn', onClick: () => setFilter('team') }, 'Your race'),
+    h('button', { class: 'segbtn', onClick: () => setFilter('all') }, 'Everything'));
+  function setFilter(f) {
+    app.radioFilter = f;
+    radioFilter.children[0].className = `segbtn ${f === 'team' ? 'on' : ''}`;
+    radioFilter.children[1].className = `segbtn ${f === 'all' ? 'on' : ''}`;
+    lastFeedLen = -1;
+  }
 
   mount(root,
     h('div', { class: 'panel tight', style: { padding: '0', overflow: 'hidden' } }, viewport),
@@ -57,7 +66,9 @@ export function renderRaceScreen(app, root, race, round) {
       h('div', { class: 'grid' }, stratSlot),
       h('div', { class: 'grid' },
         panel('Timing', null, towerSlot),
-        panel('Team radio', null, radioSlot))));
+        h('div', { class: 'panel' },
+          h('h3', {}, 'Team radio', h('span', { class: 'right' }, radioFilter)),
+          radioSlot))));
 
   // ---- 3D or fall back to the map --------------------------------------
   let scene = null;
@@ -205,8 +216,12 @@ export function renderRaceScreen(app, root, race, round) {
     const real = Math.min(0.25, (now - last) / 1000);
     last = now;
 
+    // Race time elapsed this frame. The renderer integrates by this, so the
+    // cars move continuously even though the simulation steps in quarters.
+    let simDt = 0;
     if (race.state === 'racing' && app.speed > 0) {
-      acc += real * app.speed;
+      simDt = real * app.speed;
+      acc += simDt;
       let steps = 0;
       while (acc >= 0.25 && steps < 400 && race.state === 'racing') {
         race.step(0.25); acc -= 0.25; steps++;
@@ -222,11 +237,14 @@ export function renderRaceScreen(app, root, race, round) {
         const leader = order.find((c) => c.status !== 'retired');
         if (leader && app.camMode !== 'split') scene.setTargets(leader.id, null);
       }
+      scene.setTimeScale(app.speed);
+      // How far this frame sits between the last simulation step and the next.
+      const alpha = app.speed > 0 ? Math.max(0, Math.min(1, acc / 0.25)) : 1;
       scene.updateCars(order.map((c) => ({
-        id: c.id, u: c.u, status: c.status, tyre: c.tyre, drs: c.drs,
-        speed: track.length / Math.max(50, race.currentLapTime(c)),
+        id: c.id, u: c.u, prevU: c.prevU, status: c.status, tyre: c.tyre, drs: c.drs,
+        speed: race.currentSpeed(c),
         lateral: lateralFor(c, order),
-      })), real);
+      })), alpha, real);
       scene.render(real);
       labelAcc += real;
       if (labelAcc >= 1 / 12) { labelAcc = 0; paintLabels(order); }
@@ -341,10 +359,14 @@ export function renderRaceScreen(app, root, race, round) {
       }
     }
 
-    // Radio.
+    // Radio. Filtered to your own race by default — a wall of other people's
+    // overtakes is what made it unreadable.
     if (race.feed.length !== lastFeedLen) {
       lastFeedLen = race.feed.length;
-      radioSlot.replaceChildren(...race.feed.slice(-40).map((f) => h('div', {
+      const mineIds = new Set(mine.map((x) => x.id));
+      const shown = race.feed.filter((f) => app.radioFilter === 'all'
+        || f.player || mineIds.has(f.car) || f.priority === 'high');
+      radioSlot.replaceChildren(...shown.slice(-40).map((f) => h('div', {
         class: `rmsg from-${f.from || 'commentary'} pri-${f.priority || 'low'}`,
       },
         h('div', { class: 'rmeta' },
@@ -357,6 +379,7 @@ export function renderRaceScreen(app, root, race, round) {
     for (const b of briefs) b.update();
   }
 
+  setFilter(app.radioFilter || 'team');
   window.addEventListener('resize', () => { scene?.resize(); });
   paintPanels(race.order || race.updateOrder());
   requestAnimationFrame(frame);
@@ -379,6 +402,46 @@ function makeCarCard(app, race, c) {
   const pitRow = h('div', { class: 'pillrow' });
   const footer = h('div', { class: 'tiny dim', style: { marginTop: '7px' } });
 
+  // ---- who is running this car ----
+  const engBtn = h('button', { class: 'segbtn', onClick: () => setMode('auto') }, 'Engineer');
+  const youBtn = h('button', { class: 'segbtn', onClick: () => setMode('manual') }, 'You');
+  const seg = h('div', { class: 'seg' }, engBtn, youBtn);
+  const segNote = h('div', { class: 'tiny dim', style: { marginTop: '5px' } });
+  function setMode(m) {
+    c.strategyMode = m;
+    if (m === 'manual') c.overrideUntilLap = 1e9;
+    else c.overrideUntilLap = c.lap;
+    race.pushRadio('engineer',
+      m === 'auto'
+        ? `Understood — I have ${c.driver.short || c.driver.name.split(' ').pop()} from here.`
+        : `Copy, ${c.driver.short || c.driver.name.split(' ').pop()} is yours. I will keep quiet.`,
+      'normal', c.id);
+    update();
+  }
+
+  // ---- telemetry ----
+  const spdEl = h('span', { class: 'tv' });
+  const ersBar = h('i', {});
+  const ersPct = h('span', { class: 'tiny dim' });
+  const drsEl = h('span', { class: 'drs' }, 'DRS');
+  const gapAhead = h('span', { class: 'tv' });
+  const gapBehind = h('span', { class: 'tv' });
+  const lastEl = h('span', { class: 'tv mono' });
+  const bestEl = h('span', { class: 'tv mono' });
+  const secRow = h('div', { class: 'secrow' });
+
+  const telemetry = h('div', { class: 'telem' },
+    h('div', { class: 'trow big' },
+      h('span', { class: 'tk' }, 'SPEED'), spdEl, drsEl),
+    h('div', { class: 'trow' },
+      h('span', { class: 'tk' }, 'ERS'),
+      h('div', { class: 'meter thin', style: { flex: '1' } }, ersBar), ersPct),
+    h('div', { class: 'trow' }, h('span', { class: 'tk' }, 'AHEAD'), gapAhead),
+    h('div', { class: 'trow' }, h('span', { class: 'tk' }, 'BEHIND'), gapBehind),
+    h('div', { class: 'trow' }, h('span', { class: 'tk' }, 'LAST'), lastEl,
+      h('span', { class: 'tk', style: { marginLeft: 'auto' } }, 'BEST'), bestEl),
+    secRow);
+
   const modeBtns = {};
   const modeRow = h('div', { class: 'pillrow' }, ['push', 'neutral', 'conserve', 'hold'].map((m) => {
     const b = h('button', { class: 'pill', onClick: () => race.command(c.id, 'mode', m) }, m);
@@ -391,8 +454,8 @@ function makeCarCard(app, race, c) {
   }));
 
   const body = h('div', {},
-    defiance,
-    h('div', { class: 'tiny dim', style: { margin: '4px 0 5px' } }, 'PACE'), modeRow,
+    seg, segNote, telemetry, defiance,
+    h('div', { class: 'tiny dim', style: { margin: '10px 0 5px' } }, 'PACE'), modeRow,
     h('div', { class: 'tiny dim', style: { margin: '10px 0 5px' } }, 'ENERGY'), ersRow,
     pitLabel, pitRow, footer);
 
@@ -417,11 +480,54 @@ function makeCarCard(app, race, c) {
     statusNote.style.display = 'none'; body.style.display = '';
     defiance.style.display = c.defiance > 0 ? '' : 'none';
 
+    const auto = c.strategyMode === 'auto';
+    engBtn.className = `segbtn ${auto ? 'on' : ''}`;
+    youBtn.className = `segbtn ${auto ? '' : 'on'}`;
+    const holding = auto && c.lap < c.overrideUntilLap;
+    segNote.textContent = auto
+      ? (holding
+        ? `Your call stands for ${Math.max(0, c.overrideUntilLap - c.lap)} more laps, then he takes it back.`
+        : 'His race engineer is running the strategy. Any button below overrides it for three laps.')
+      : 'You are calling everything for this car.';
+
+    // Telemetry.
+    const kmh = race.currentSpeed(c) * 3.6;
+    spdEl.textContent = `${kmh.toFixed(0)} km/h`;
+    drsEl.style.visibility = c.drs ? 'visible' : 'hidden';
+    ersBar.style.width = `${(c.ersCharge * 100).toFixed(0)}%`;
+    ersBar.style.background = c.ersCharge < 0.15 ? 'var(--bad)' : c.ersCharge < 0.4 ? 'var(--warn)' : 'var(--accent-2)';
+    ersPct.textContent = `${(c.ersCharge * 100).toFixed(0)}%`;
+
+    const order = race.order || race.updateOrder();
+    const idx = order.indexOf(c);
+    const ah = order[idx - 1], bh = order[idx + 1];
+    gapAhead.replaceChildren(ah && ah.status !== 'retired'
+      ? h('span', {}, h('span', { class: 'mono' }, `+${c.interval.toFixed(1)}`), ' ',
+        h('span', { class: 'dim' }, ah.driver.short || ah.driver.name.split(' ').pop()))
+      : h('span', { class: 'dim' }, 'leading'));
+    gapBehind.replaceChildren(bh && bh.status !== 'retired'
+      ? h('span', {}, h('span', { class: 'mono' }, `−${bh.interval.toFixed(1)}`), ' ',
+        h('span', { class: 'dim' }, bh.driver.short || bh.driver.name.split(' ').pop()))
+      : h('span', { class: 'dim' }, 'last'));
+
+    lastEl.textContent = c.lastLapTime ? lapTime(c.lastLapTime) : '—';
+    bestEl.textContent = c.bestLap ? lapTime(c.bestLap) : '—';
+
+    secRow.replaceChildren(...[0, 1, 2].map((i) => {
+      const live = c.sectors[i], done = c.lastSectors[i], best = c.bestSectors[i];
+      const t = live ?? done;
+      const cls = t == null ? 'dim' : (best != null && t <= best + 0.001) ? 'good' : (best != null && t > best + 0.35) ? 'bad' : '';
+      return h('div', { class: `seccell ${live != null ? 'live' : ''}` },
+        h('span', { class: 'tiny dim' }, `S${i + 1}`),
+        h('span', { class: `mono ${cls}` }, t != null ? t.toFixed(1) : '—'));
+    }));
+
     for (const [m, b] of Object.entries(modeBtns)) {
       b.className = `pill ${c.mode === m ? 'on' : ''}`; b.disabled = finished;
     }
     for (const [m, b] of Object.entries(ersBtns)) {
-      b.className = `pill ${c.ersMode === m ? 'on' : ''}`; b.disabled = finished;
+      b.className = `pill ${c.ersMode === m ? 'on' : ''}`;
+      b.disabled = finished || (m === 'deploy' && c.ersCharge <= 0.02);
     }
 
     const options = sensibleCompounds(race.weather.wetness);

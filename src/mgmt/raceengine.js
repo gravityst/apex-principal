@@ -168,6 +168,19 @@ export function createWeekend(opts) {
       orderedMode: null,
       damage: 0,
 
+      // Who is running this car's strategy. Two cars is too much to hand-fly,
+      // so one of yours can be left to its own race engineer while you still
+      // keep the ability to override any call at any moment.
+      strategyMode: 'auto',
+      overrideUntilLap: -1,
+      ersCharge: 0.72,
+      speed: 0,
+      sectors: [null, null, null],
+      lastSectors: [null, null, null],
+      bestSectors: [null, null, null],
+      _lapStart: 0,
+      _sectorMark: 0,
+
       gridPos: 0,
       position: 0,
       lastLapTime: 0,
@@ -252,13 +265,37 @@ export function createWeekend(opts) {
     t -= (pace - 1) * c.model.perGripLoss;
 
     // Energy management: deploying more makes you faster now and slower later.
-    if (c.ersMode === 'deploy') t -= 0.16;
+    if (c.ersMode === 'deploy' && c.ersCharge > 0.02) t -= 0.16;
     else if (c.ersMode === 'harvest') t += 0.22;
 
     if (race.safetyCar) t *= race.safetyCar.kind === 'sc' ? 1.62 : 1.34;
     return t;
   }
   race.currentLapTime = currentLapTime;
+
+  /**
+   * Speed right now, in m/s: the solved speed at this point of the lap, scaled
+   * by how far off the reference lap the car currently is. Real physics at a
+   * real place on the circuit, not a lap average.
+   */
+  function currentSpeed(c) {
+    const prof = c.model.speeds;
+    if (!prof || !prof.length) return track.length / Math.max(50, currentLapTime(c));
+    const f = ((c.u % 1) + 1) % 1;
+    const v = prof[Math.min(prof.length - 1, Math.floor(f * prof.length))];
+    if (c.status === 'pit') return pit.speedLimit || 22.2;
+    const scale = c.model.base / Math.max(1, currentLapTime(c));
+    return v * scale;
+  }
+  race.currentSpeed = currentSpeed;
+
+  /** Gap in seconds to the car behind, or null if last. */
+  race.gapBehind = (c) => {
+    const order = race.order || updateOrder();
+    const behind = order[order.indexOf(c) + 1];
+    if (!behind || behind.status === 'retired') return null;
+    return behind.interval;
+  };
 
   /** Sort and assign running order; compute intervals. */
   function updateOrder() {
@@ -409,15 +446,28 @@ export function createWeekend(opts) {
     for (const c of grid) {
       c.status = 'running';
       c.lap = 0;
+      c._lapStart = 0;
+      c._sectorMark = 0;
+      c.ersCharge = 0.72;
       // The grid sits just past the timing line, pole furthest up the road.
       // Every car then completes the same number of line crossings, so the
       // eight metres a slot is a real advantage and nothing else moves.
       c.u = (grid.length - c.gridPos) * (8 / track.length);
+      c.prevU = c.u;
       c.distance = c.u * track.length;
       c.tyre = c.isPlayer && playerTyres[c.id] ? playerTyres[c.id] : pickStartTyre(c, openers);
       c.wear = 0; c.tyreAge = 0; c.stintStart = 0;
       c.raceTime = 0;
     }
+    // Two cars is a lot to hand-fly. By default the better-placed of yours is
+    // yours to call and the other runs on its own race engineer, which you can
+    // swap either way at any point.
+    const yours = grid.filter((c) => c.isPlayer);
+    yours.forEach((c, i) => {
+      c.strategyMode = i === 0 ? 'manual' : 'auto';
+      c.overrideUntilLap = i === 0 ? 1e9 : 0;
+    });
+
     race.state = 'racing';
     race.time = 0;
     race.lap = 0;
@@ -650,7 +700,12 @@ export function createWeekend(opts) {
   // ---- pit stops ---------------------------------------------------------
 
   function considerPit(c) {
-    if (c.isPlayer && !race.autoStrategy) return;   // the pit wall is manned
+    // A player car runs its own engineer unless YOU have taken it over, and
+    // even then your explicit calls hold the engineer off for a few laps.
+    if (c.isPlayer) {
+      if (c.strategyMode !== 'auto' && !race.autoStrategy) return;
+      if (c.lap < c.overrideUntilLap) return;
+    }
     if (c.status !== 'running' || c.pitRequested) return;
     const lapsLeft = totalLaps - c.lap;
     if (lapsLeft < 4) return;
@@ -682,6 +737,10 @@ export function createWeekend(opts) {
     c._newTyre = c.pitRequested;
     c._fumble = stop.fumble;
     if (c.penalty) { say(`${c.driver.name} serves his ${c.penalty}-second penalty.`, { kind: 'flag', car: c.id, player: c.isPlayer }); c.penalty = 0; }
+    if (c.isPlayer && c.strategyMode === 'auto' && c.lap >= c.overrideUntilLap) {
+      say(`Boxing ${c.driver.short || c.driver.name.split(' ').pop()} — my call. ${TYRE_COMPOUNDS[c._newTyre]?.name ?? c._newTyre} going on.`,
+        { kind: 'brief', from: 'engineer', priority: 'normal', car: c.id, player: true });
+    }
     if (stop.fumble) say(`Trouble in the pit box for ${c.driver.name} — that is a slow stop.`, { kind: 'pit', car: c.id, player: c.isPlayer });
     else say(`${c.driver.name} boxes for ${TYRE_COMPOUNDS[c.pitRequested]?.name ?? c.pitRequested}. ${stop.time.toFixed(1)}s stationary.`, { kind: 'pit', car: c.id, player: c.isPlayer });
     c.pitRequested = null;
@@ -706,6 +765,8 @@ export function createWeekend(opts) {
   race.command = (carId, cmd, arg) => {
     const c = race.cars.find((x) => x.id === carId);
     if (!c || c.status === 'retired' || c.status === 'finished') return { ok: false };
+    // You have spoken, so the engineer holds off on this car for a few laps.
+    c.overrideUntilLap = c.lap + 3;
 
     if (cmd === 'ers') { c.ersMode = arg; return { ok: true, complied: true }; }
 
@@ -775,6 +836,23 @@ export function createWeekend(opts) {
   function updateDriverIntent(c, dtLaps) {
     if (c.defiance > 0) c.defiance -= dtLaps;
 
+    // A player car on its own engineer is managed exactly like a rival — and
+    // it says what it is doing, so you can disagree in time.
+    if (c.isPlayer && c.strategyMode === 'auto' && c.lap >= c.overrideUntilLap) {
+      const lapsLeft = totalLaps - c.lap;
+      const fuelShort = c.fuel < lapsLeft * fuelPerLap * 1.01;
+      const want = fuelShort && lapsLeft > 2 ? 'conserve'
+        : c.wear > 0.88 && lapsLeft > 5 ? 'conserve'
+          : (lapsLeft < 8 || c.interval < 1.2) ? 'push' : 'neutral';
+      if (want !== c.mode) {
+        c.mode = want;
+        c.orderedMode = want;
+        say(`${c.driver.short || c.driver.name.split(' ').pop()} going to ${want}${fuelShort ? ' — fuel is tight' : c.wear > 0.88 ? ' — tyres are going' : ''}.`,
+          { kind: 'brief', from: 'engineer', priority: 'low', car: c.id, player: true });
+      }
+      return;
+    }
+
     if (!c.isPlayer) {
       // Rival drivers manage themselves: hard early if they can, careful when
       // the tyre is going, flat out at the end.
@@ -821,6 +899,11 @@ export function createWeekend(opts) {
     if (race.state !== 'racing') return;
     race.time += dt;
 
+    // Remember where everyone was, so the renderer can draw the frames BETWEEN
+    // simulation steps instead of snapping to each one. This is what the eye
+    // reads as smooth motion.
+    for (const c of race.cars) { c.prevU = c.u; c.prevStatus = c.status; }
+
     for (const c of race.cars) {
       if (c.status === 'retired' || c.status === 'finished') continue;
 
@@ -847,6 +930,17 @@ export function createWeekend(opts) {
       const lapT = currentLapTime(c);
       const dLap = dt / lapT;
 
+      // Energy store. Deploying spends it, harvesting rebuilds it, and running
+      // it flat empties the store in a couple of laps — so 'deploy' is a
+      // decision with a cost rather than a free button.
+      const ersRate = c.ersMode === 'deploy' ? -0.46 : c.ersMode === 'harvest' ? 0.50 : 0.045;
+      c.ersCharge = Math.max(0, Math.min(1, c.ersCharge + ersRate * dLap));
+      if (c.ersCharge <= 0.001 && c.ersMode === 'deploy') {
+        c.ersMode = 'balanced';
+        if (c.isPlayer) say(`${c.driver.name} has run the battery flat — back to balanced.`, { kind: 'brief', from: 'engineer', priority: 'normal', car: c.id, player: true });
+      }
+
+      c.speed = currentSpeed(c);
       updateDriverIntent(c, dLap);
       fuelBurn(c, dLap);
       c.wear += wearPerLap(c.tyre, c.phys, c.driver, {
@@ -859,6 +953,19 @@ export function createWeekend(opts) {
 
       const prevU = c.u;
       c.u += dLap;
+
+      // Sector splits. The crossing point is interpolated inside the step so
+      // the times are real rather than rounded to the simulation tick.
+      const bounds = circuit.sectors || [0.333, 0.666];
+      for (let sIdx = 0; sIdx < bounds.length; sIdx++) {
+        const bnd = bounds[sIdx];
+        if (prevU < bnd && c.u >= bnd && c._sectorMark <= sIdx) {
+          const frac = (bnd - prevU) / Math.max(1e-9, c.u - prevU);
+          const at = race.time - dt + dt * frac;
+          c.sectors[sIdx] = at - c._lapStart - (sIdx > 0 ? (c.sectors[0] ?? 0) : 0);
+          c._sectorMark = sIdx + 1;
+        }
+      }
 
       // Pit entry.
       if (c.pitRequested && crossed(prevU, c.u, pit.entry)) {
@@ -873,6 +980,16 @@ export function createWeekend(opts) {
         c.lap++;
         c.lastLapTime = lapT;
         c.laps.push(lapT);
+        c.sectors[2] = Math.max(0, lapT - (c.sectors[0] ?? 0) - (c.sectors[1] ?? 0));
+        c.lastSectors = c.sectors.slice();
+        for (let i = 0; i < 3; i++) {
+          if (c.lastSectors[i] != null && (c.bestSectors[i] == null || c.lastSectors[i] < c.bestSectors[i])) {
+            c.bestSectors[i] = c.lastSectors[i];
+          }
+        }
+        c.sectors = [null, null, null];
+        c._sectorMark = 0;
+        c._lapStart = race.time;
         if (!race.safetyCar && (c.bestLap == null || lapT < c.bestLap)) c.bestLap = lapT;
         if (!race.safetyCar && (!race.fastestLap || lapT < race.fastestLap.time)) {
           race.fastestLap = { time: lapT, car: c.id, driver: c.driver.name, lap: c.lap };
@@ -907,6 +1024,17 @@ export function createWeekend(opts) {
 
     updateWeather(dt / 12);
     updateBattles(dt);
+
+    // A car that genuinely jumped — into the pit lane, or recovered — must not
+    // be interpolated across the gap; it would slide sideways across the
+    // circuit. Anything under about a hundred metres is a real move and is
+    // drawn as one.
+    for (const c of race.cars) {
+      if (c.prevU == null) { c.prevU = c.u; continue; }
+      let d = c.u - c.prevU;
+      d -= Math.round(d);
+      if (Math.abs(d) * track.length > 110 || c.prevStatus !== c.status) c.prevU = c.u;
+    }
 
     // Once the leader has taken the flag the rest get one more lap at most, as
     // they would in reality; nobody is left circulating on their own.

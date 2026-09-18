@@ -248,6 +248,7 @@ export function createRaceScene(canvas, track, opts = {}) {
     zoom: 80,               // metres above the car
     targets: [null, null],
     orient: 'across',       // 'across' uses a wide panel properly; 'along' is portrait
+    timeScale: 1,           // the camera has to turn as fast as the car does
     follow: [new THREE.Vector3(), new THREE.Vector3()],
     heading: [0, 0],
   };
@@ -286,6 +287,13 @@ export function createRaceScene(canvas, track, opts = {}) {
       wheels: [0, 1, 2, 3].map(() => ({ spinAngle: 0, steerAngle: 0, compression: 0.5 })),
       speed: 0,
       visible: true,
+      // Render-side position. The simulation advances in quarter-second steps;
+      // drawing those steps raw is what made the cars stutter. These integrate
+      // the car's own speed every frame and are sprung onto the simulation's
+      // position, so the motion is continuous and still honest.
+      smoothU: null,
+      smoothLat: null,
+      yaw: 0,
     };
     cars.set(entry.id, rec);
     return rec;
@@ -320,29 +328,59 @@ export function createRaceScene(canvas, track, opts = {}) {
   };
 
   /**
-   * @param list  [{ id, u, status, tyre, drs, speed, lateral }]
+   * @param list    [{ id, u, prevU, status, tyre, drs, speed, lateral }]
+   * @param alpha   how far the renderer is between the last simulation step
+   *                and the next one, 0..1
+   * @param realDt  wall-clock seconds, for the filters that are cosmetic
+   *
+   * The simulation advances in quarter-second steps. Drawing those steps raw
+   * teleports the cars fourteen metres at a time; chasing the newest step with
+   * a spring just turns the teleport into a lurch. Interpolating BETWEEN the
+   * last two states is what actually produces constant velocity on screen.
    */
-  function updateCars(list, dt) {
+  function updateCars(list, alpha, realDt) {
+    const rd = Math.max(1e-4, realDt ?? 0.016);
+    const a = Math.max(0, Math.min(1, alpha ?? 1));
     for (const d of list) {
       const rec = cars.get(d.id);
       if (!rec) continue;
       const out = d.status === 'retired';
       rec.model.group.visible = !out;
       if (rec.marker) rec.marker.visible = !out;
-      if (out) continue;
+      if (out) { rec.smoothU = null; continue; }
 
-      const heading = placeAt(d.u, d.lateral ?? 0, _v);
+      const targetLat = d.lateral ?? 0;
+      const speed = d.speed ?? 70;
+
+      // Interpolate along the ring by the shortest way round.
+      const from = d.prevU ?? d.u;
+      let span = d.u - from;
+      span -= Math.round(span);
+      rec.smoothU = ((from + span * a) % 1 + 1) % 1;
+
+      if (rec.smoothLat == null) rec.smoothLat = targetLat;
+
+      // Moving across the track is a manoeuvre, not a teleport.
+      const prevLat = rec.smoothLat;
+      rec.smoothLat += (targetLat - rec.smoothLat) * Math.min(1, rd * 2.0);
+
+      const heading = placeAt(rec.smoothU, rec.smoothLat, _v);
+      // A car changing line yaws into it slightly.
+      const latRate = (rec.smoothLat - prevLat) / rd;
+      const targetYaw = THREE.MathUtils.clamp(-latRate / Math.max(12, speed), -0.10, 0.10);
+      rec.yaw += (targetYaw - rec.yaw) * Math.min(1, rd * 6);
+
       rec.model.group.position.copy(_v);
-      rec.model.group.rotation.y = heading;
+      rec.model.group.rotation.y = heading + rec.yaw;
       rec.pos.copy(_v);
       rec.heading = heading;
       if (rec.marker) rec.marker.position.set(_v.x, _v.y + 0.05, _v.z);
-      rec.speed = d.speed ?? 70;
+      rec.speed = speed;
 
       // Wheels: spin from speed, steer and body roll from local curvature.
-      const k = curvAt(d.u);
+      const k = curvAt(rec.smoothU);
       const steer = THREE.MathUtils.clamp(-k * 220, -0.42, 0.42);
-      const spin = (rec.speed / 0.36) * dt;
+      const spin = (rec.speed / 0.36) * rd;
       for (let i = 0; i < 4; i++) {
         const w = rec.wheels[i];
         w.spinAngle = (w.spinAngle + spin) % 6.283185307179586;
@@ -359,7 +397,7 @@ export function createRaceScene(canvas, track, opts = {}) {
         steer,
         gForce: { lat: k * rec.speed * rec.speed, lon: 0 },
         throttle: 0.8, brake: 0, rpm: 11000,
-      }, dt);
+      }, rd);
     }
   }
 
@@ -369,14 +407,14 @@ export function createRaceScene(canvas, track, opts = {}) {
     const rec = targetId ? cars.get(targetId) : null;
     if (!rec) return false;
     const f = state.follow[slot];
-    if (f.lengthSq() === 0) f.copy(rec.pos);
-    // Smooth the follow point so a pit stop or a pass does not snap the view.
-    f.lerp(rec.pos, Math.min(1, dt * 6));
+    f.copy(rec.pos);
     // Heading follows too, so the car's direction of travel stays "up".
     let dh = rec.heading - state.heading[slot];
     while (dh > Math.PI) dh -= Math.PI * 2;
     while (dh < -Math.PI) dh += Math.PI * 2;
-    state.heading[slot] += dh * Math.min(1, dt * 3.2);
+    // At 15x the car changes direction fifteen times faster, so the view has
+    // to follow fifteen times harder or the circuit swings around underneath it.
+    state.heading[slot] += dh * Math.min(1, dt * (2.2 + state.timeScale * 1.6));
 
     const h = state.zoom;
     // A touch behind and above, looking down: close enough to read the car,
@@ -508,6 +546,7 @@ export function createRaceScene(canvas, track, opts = {}) {
     setTargets: (a, b) => { state.targets[0] = a; state.targets[1] = b; },
     setZoom: (z) => { state.zoom = Math.max(18, Math.min(420, z)); },
     setOrient: (o) => { state.orient = o; },
+    setTimeScale: (t) => { state.timeScale = Math.max(1, t || 1); },
     getZoom: () => state.zoom,
     quality,
   };

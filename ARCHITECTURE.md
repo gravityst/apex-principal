@@ -35,6 +35,7 @@ The dependency arrow only ever points `ui → mgmt → data`. No module in `mgmt
 | `raceengine.js` | Practice, qualifying, and a time-stepped race. |
 | `state.js` | The save object, money helpers, persistence. |
 | `strategy.js` | Tyre outlook, pit cost, rejoin projection, undercut maths, the push trade-off, and the engineer's proactive calls. |
+| | Also in `raceengine.js`: per-car `strategyMode` (`auto` = his own engineer, `manual` = you), `overrideUntilLap` so any command you give holds the engineer off for three laps, an ERS store, interpolated sector splits, and `currentSpeed()` read from the solved profile. |
 | `season.js` | Round and season progression; the headless entry points. |
 
 ## The lap solver
@@ -88,10 +89,11 @@ Overtaking is resolved once per pass through a DRS zone, not per tick, and only 
 
 `src/race3d/scene.js` is new. APEX F1's track builder is 4,266 lines written against its own sampler, carrying scenery, weather and post-processing this game does not need, so the circuit is extruded here instead: asphalt, white lines, kerbs on the corners only, a run-off apron and a ground plane, all from `mgmt/track.js`'s centreline arrays.
 
-Two details worth knowing:
+Three details worth knowing:
 
 - **Winding.** The extruded ribbons wind clockwise seen from above. Front-face culling hid the entire circuit while the cars floated over nothing — every track material is `DoubleSide`.
-- **Orientation.** The panel is far wider than it is tall, so the camera rolls 90° (`state.orient === 'across'`): the track runs across the screen and the width shows road ahead instead of run-off.
+- **Orientation.** The panel is far wider than it is tall, so the camera rolls 90° (`state.orient === 'across'`): the track runs across the screen and the width shows road ahead instead of run-off. The camera's turn rate scales with the time compression, or at 15× the circuit swings around underneath a view that cannot keep up.
+- **Interpolation, not chasing.** The simulation steps 0.25 s at a time — fourteen metres. Drawing those steps raw stutters; springing onto the newest one just turns the teleport into a lurch, because the error is a sawtooth the spring can never catch. `race.step()` records each car's `prevU` first, and the renderer draws at `lerp(prevU, u, alpha)` where `alpha` is how far the frame sits into the pending step. Frame-to-frame speed change went from a 162% 95th percentile to 0.02%. A jump over ~110 m (pit entry, recovery) resets `prevU` so the car is never interpolated sideways across the circuit.
 
 Car state is synthesised, not simulated. A management game does not compute suspension travel, so wheel spin comes from speed, steer and body roll from local curvature, and compression from lateral load. Plausible beats absent.
 

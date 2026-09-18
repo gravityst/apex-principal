@@ -253,6 +253,10 @@ export function lapModel(track, phys, cond = {}) {
 
   return {
     base: base.time,
+    // The solved speed profile, so the pit wall can show a real instantaneous
+    // speed at the car's actual position rather than a lap average.
+    speeds: base.speeds,
+    cal: base.cal,
     vmax: base.vmax,
     vavg: base.vavg,
     sectors: base.sectors,

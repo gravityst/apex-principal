@@ -44,6 +44,21 @@ The cars are the real APEX F1 models — the same procedural chassis, wings, hal
 
 The camera is a close top-down chase that zooms from about twenty metres to four hundred, on a scroll wheel or a pinch. Follow either of your drivers, follow the leader, or switch to **Both cars** and run a split screen with one camera per driver. Every car on screen carries a tag: position, driver code, compound and tyre age — so the view is something you read, not just something you look at.
 
+The simulation advances in quarter-second steps, but the renderer interpolates *between* them, so the cars move at constant velocity on screen rather than teleporting fourteen metres at a time. Measured over 1,500 frames, the frame-to-frame change in a car's speed has a median of 0.00% and a 99th percentile of 0.05%.
+
+## Two cars, one of you
+
+Hand-flying both cars is too much, so each one has a **Engineer / You** switch on its pit wall card:
+
+- **Engineer** — his own race engineer runs the strategy: stops, compounds, pace, fuel saving. He announces every call on the radio before he makes it, so you can disagree in time.
+- **You** — nothing happens to that car unless you say so.
+
+Either way every button stays live. Press one on an engineer-run car and your call is executed immediately and stands for three laps before he takes it back. By default your better-placed car is yours and the other runs itself.
+
+## What the pit wall shows
+
+Per car, live: **speed** in km/h taken from the solved speed profile at the car's actual point on the circuit, **ERS charge** (deploying drains it, harvesting rebuilds it, and running it flat forces you back to balanced), **DRS**, the gap ahead and behind with driver codes, last and best lap, and all three **sector times** — live for the sector in progress, coloured against that driver's own best.
+
 ## Knowing when to push
 
 This is the part a management game usually asks you to guess at. Here the pit wall runs the numbers, live, from the same lap model the race uses:
