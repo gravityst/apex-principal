@@ -425,10 +425,14 @@ export function createWeekend(opts) {
     // running order then resolves into actual places. It has to move `u`:
     // `distance` is recomputed from `u` on every step.
     for (const c of grid) {
-      const gain = (sorted.indexOf(c) - grid.indexOf(c)) * -1;
-      c.u = Math.max(0, c.u + (gain * 3.2) / track.length);
+      // Clamped: a start is worth a few car lengths, not half the grid. How
+      // many places that turns into is decided by the running order, so the
+      // radio does not claim a number that has not happened yet.
+      const gain = Math.max(-6, Math.min(6, (sorted.indexOf(c) - grid.indexOf(c)) * -1));
+      c.u = Math.max(0, c.u + (gain * 3.4) / track.length);
       c.distance = c.u * track.length;
-      if (gain >= 4 && c.isPlayer) say(`Superb launch from ${c.driver.name} — up ${gain} places off the line.`, { kind: 'race', car: c.id, player: true });
+      if (gain >= 4 && c.isPlayer) say(`Blinding launch from ${c.driver.name} — he is all over the car in front already.`, { kind: 'race', car: c.id, player: true });
+      else if (gain <= -4 && c.isPlayer) say(`Poor getaway for ${c.driver.name}. He is swamped off the line.`, { kind: 'race', car: c.id, player: true });
     }
     // First-lap contact.
     if (rng.chance(0.16 + weather.wetness * 0.30)) {
