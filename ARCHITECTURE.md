@@ -10,8 +10,10 @@ Everything under `src/mgmt/` is pure: no DOM, no globals, no side effects at imp
 ```
 src/data/        circuits.js, teams.js          — inherited data, never mutated
 src/mgmt/        the simulation                 — pure, runs under node
+src/race3d/      the 3D view                    — three.js, browser only
 src/ui/          screens                        — DOM only, no game logic
 src/principal.js application shell              — routing and the save
+vendor/three/    three.js r185 + BufferGeometryUtils, vendored
 ```
 
 The dependency arrow only ever points `ui → mgmt → data`. No module in `mgmt/` imports from `ui/`.
@@ -32,6 +34,7 @@ The dependency arrow only ever points `ui → mgmt → data`. No module in `mgmt
 | `calendar.js` | Ten rounds over five circuits, points, weather profiles. |
 | `raceengine.js` | Practice, qualifying, and a time-stepped race. |
 | `state.js` | The save object, money helpers, persistence. |
+| `strategy.js` | Tyre outlook, pit cost, rejoin projection, undercut maths, the push trade-off, and the engineer's proactive calls. |
 | `season.js` | Round and season progression; the headless entry points. |
 
 ## The lap solver
@@ -79,12 +82,28 @@ Positions come from `distance`, except for cars that have taken the flag: they h
 
 Overtaking is resolved once per pass through a DRS zone, not per tick, and only when the attacker is genuinely faster. A cooldown stops a pair re-litigating the same move every second.
 
+## The 3D view
+
+`src/race3d/carModel.js` is APEX F1's own `src/render/carModel.js`, unchanged apart from three rewritten import paths — bare specifiers (`three`, `three/addons/...`) became relative ones so the game needs no import map and no loader.
+
+`src/race3d/scene.js` is new. APEX F1's track builder is 4,266 lines written against its own sampler, carrying scenery, weather and post-processing this game does not need, so the circuit is extruded here instead: asphalt, white lines, kerbs on the corners only, a run-off apron and a ground plane, all from `mgmt/track.js`'s centreline arrays.
+
+Two details worth knowing:
+
+- **Winding.** The extruded ribbons wind clockwise seen from above. Front-face culling hid the entire circuit while the cars floated over nothing — every track material is `DoubleSide`.
+- **Orientation.** The panel is far wider than it is tall, so the camera rolls 90° (`state.orient === 'across'`): the track runs across the screen and the width shows road ahead instead of run-off.
+
+Car state is synthesised, not simulated. A management game does not compute suspension travel, so wheel spin comes from speed, steer and body roll from local curvature, and compression from lateral load. Plausible beats absent.
+
+`screenPositions()` projects each car into the active viewport so the DOM can hang a tag over it. In split view the same car appears in both panes, so the label pool is keyed by `id#pane` — keyed by id alone, the two panes fought over one element and the lower one lost.
+
 ## Where the design decisions live
 
 - **No favouritism** — `rivals.js`. The file header states the rule; the code holds to it.
 - **Drivers are fallible** — `rollMistake()` in `raceengine.js`, `complianceChance()` in `personnel.js`.
 - **The field converges without cheating** — `costPerPoint()` in `rnd.js`, `BUDGET_CAP` in `finance.js`, `REGULATION_CHANGES` in `season.js`.
 - **Circuits have character** — nowhere. It is emergent from `track.js` geometry and the friction ellipse in `laptime.js`.
+- **Knowing when to push** — `strategy.js`. Nothing in it is a heuristic: every figure comes from the lap model the race engine is already using.
 
 ## Balance harness
 

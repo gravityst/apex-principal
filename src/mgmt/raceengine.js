@@ -192,8 +192,24 @@ export function createWeekend(opts) {
 
   // ---- helpers -----------------------------------------------------------
 
+  /** Who a message is from, derived from what kind of message it is. */
+  const SPEAKER = {
+    refusal: 'driver', order: 'engineer', team: 'engineer',
+    flag: 'control', penalty: 'control',
+    pit: 'pitlane',
+    weather: 'control', crash: 'commentary', incident: 'commentary',
+    failure: 'commentary', overtake: 'commentary', race: 'commentary', quali: 'commentary',
+  };
+  const PRIORITY = {
+    crash: 'high', failure: 'high', flag: 'high', refusal: 'high',
+    weather: 'high', order: 'normal', pit: 'normal', incident: 'normal',
+    race: 'high', quali: 'normal', overtake: 'low', team: 'normal',
+  };
+
   function say(text, opts = {}) {
     race.feed.push({
+      from: opts.from || SPEAKER[opts.kind] || 'commentary',
+      priority: opts.priority || PRIORITY[opts.kind] || 'low',
       // Lap numbers are one-based for a reader: the opening lap is lap 1, not
       // lap 0, even though the leader has completed none.
       lap: race.state === 'racing' ? Math.min(totalLaps, race.lap + 1) : race.lap,
@@ -205,6 +221,14 @@ export function createWeekend(opts) {
     if (race.feed.length > 400) race.feed.splice(0, race.feed.length - 400);
   }
   race.say = say;
+
+  /**
+   * A line from the pit wall's own engineer — strategy advice rather than
+   * narration. Driven from the race screen, which owns the strategy module.
+   */
+  race.pushRadio = (from, text, priority, carId) => {
+    say(text, { kind: 'brief', from, priority, car: carId, player: true });
+  };
 
   function running() { return race.cars.filter((c) => c.status === 'running' || c.status === 'pit'); }
 

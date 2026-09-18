@@ -36,7 +36,39 @@ The factory screen shows you exactly what each department is worth, in seconds a
 
 **Hire** — a technical director lifts every department a little. A chief aerodynamicist lifts two of them a lot. And your two drivers each have skill, consistency, aggression, wet-weather ability, a temperament and a morale.
 
-**On Sunday** — practice, a three-segment qualifying, and then a live race with a track map, a timing tower and a radio feed. Four decisions per car: when to stop, what to fit, how hard to drive, and how to use the energy store. Time runs at 1×, 2×, 5× or 15×, or you can simulate the rest instantly.
+**On Sunday** — practice, a three-segment qualifying, and then a live race you watch in 3D. Four decisions per car: when to stop, what to fit, how hard to drive, and how to use the energy store. Time runs at 1×, 2×, 5× or 15×, or you can simulate the rest instantly.
+
+## The race
+
+The cars are the real APEX F1 models — the same procedural chassis, wings, halo, wheels and liveries the driving game renders, ported unchanged. The world around them is extruded from the same centreline the lap solver integrates, so what you watch is geometrically the thing being simulated.
+
+The camera is a close top-down chase that zooms from about twenty metres to four hundred, on a scroll wheel or a pinch. Follow either of your drivers, follow the leader, or switch to **Both cars** and run a split screen with one camera per driver. Every car on screen carries a tag: position, driver code, compound and tyre age — so the view is something you read, not just something you look at.
+
+## Knowing when to push
+
+This is the part a management game usually asks you to guess at. Here the pit wall runs the numbers, live, from the same lap model the race uses:
+
+| | |
+|---|---|
+| **Deg** | what one more lap of wear costs you, in seconds |
+| **Tyre cost** | what this set is already giving away against a fresh one |
+| **Stop costs** | pit transit plus stationary time, minus racing that stretch |
+| **Rejoin** | the position you would come out in, and who you would come out behind |
+| **Undercut** | the swing a fresh tyre gives you against the gap you have to cover — ON, MARGINAL or OFF |
+| **Fuel** | laps of fuel spare, or short |
+| **Push / Save** | seconds a lap gained or saved, and the laps of tyre life it costs or buys |
+| **Risk** | how likely your driver is to make a mistake, per lap, if you send him |
+
+Above them sits one sentence saying what it all implies — *"Undercut is on: 2.4s of swing against a 1.1s gap. Box this lap and you come out ahead of Vasseur."* — and your race engineer says the same thing over the radio before it is too late to act on.
+
+## Team radio
+
+Four voices, each one styled and labelled so you can tell them apart at a glance:
+
+- **ENGINEER** — your own pit wall: pit windows, undercuts, fuel, the car behind that has just stopped on fresh rubber
+- **DRIVER** — yours, in his own words, including the times he tells you no
+- **RACE CONTROL** — flags, safety cars, penalties
+- **BROADCAST** — everything happening to everyone else
 
 ## The drivers are people
 
