@@ -146,7 +146,8 @@ export function undercut(race, car, compound = null) {
   if (!target || target.status === 'retired') return null;
 
   const fit = compound || bestAvailableCompound(race, car);
-  const myFreshGrip = tyreGrip(fit, 0.02, race.weather.wetness);
+  // The out-lap on a cold set is part of what an undercut costs.
+  const myFreshGrip = tyreGrip(fit, 0.02, race.weather.wetness, 0.6);
   const myNowGrip = tyreGrip(car.tyre, car.wear, race.weather.wetness);
   const theirGrip = tyreGrip(target.tyre, target.wear, race.weather.wetness);
   const theirNextGrip = tyreGrip(target.tyre, target.wear + wearRateFor(race, target), race.weather.wetness);

@@ -104,7 +104,7 @@ export function newGame({ seed = Date.now() & 0x7fffffff, playerTeamId = 'halcyo
       inbox: [],
       lastReport: null,
     },
-    settings: { autoStrategy: true, raceSpeed: 4 },
+    settings: { autoStrategy: true, raceSpeed: 4, difficulty: 'normal' },
   };
 
   for (const t of teams) {

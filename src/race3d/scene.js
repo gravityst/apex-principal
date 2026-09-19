@@ -30,6 +30,9 @@ const UP = new THREE.Vector3(0, 1, 0);
  * corners, a run-off apron and a ground plane.
  */
 function buildTrackMesh(track, quality) {
+  // Materials the weather may dress; handed back on the group.
+  const wetables = [];
+  const weatherable = (m) => { m.userData.dryRough = m.roughness ?? 1; m.userData.dryColor = m.color.clone(); wetables.push(m); return m; };
   const n = track.samples;
   const group = new THREE.Group();
   group.name = 'circuit';
@@ -92,7 +95,7 @@ function buildTrackMesh(track, quality) {
 
   // Asphalt.
   group.add(ribbon((i) => -W(i) - 0.9, (i) => W(i) + 0.9, 0,
-    new THREE.MeshStandardMaterial({ color: 0x35383f, roughness: 0.92, metalness: 0.02, side: THREE.DoubleSide })));
+    weatherable(new THREE.MeshStandardMaterial({ color: 0x35383f, roughness: 0.92, metalness: 0.02, side: THREE.DoubleSide }))));
 
   // White lines.
   const white = new THREE.MeshStandardMaterial({ color: 0xe9edf2, roughness: 0.6, side: THREE.DoubleSide });
@@ -112,6 +115,7 @@ function buildTrackMesh(track, quality) {
   slab.rotation.z = -Math.atan2(tz, tx) + Math.PI / 2;
   group.add(slab);
 
+  group.userData.wetables = wetables;
   return group;
 }
 
@@ -196,24 +200,44 @@ export function createRaceScene(canvas, track, opts = {}) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.34;
+  renderer.toneMappingExposure = 1.34;   // adjusted per circuit below
   renderer.shadowMap.enabled = quality.shadows;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
+  // Materials the weather is allowed to change. Each remembers what it looked
+  // like dry, so the effect is applied rather than accumulated.
+  scene._surfaces = [];
   // Fog matched to the sky's horizon, so distance fades into the sky rather
   // than into a flat colour that cuts the world off.
-  scene.fog = new THREE.Fog(0x9fb8cf, 480, 2100);
+  scene.fog = new THREE.Fog(0x9fb8cf, 480, 2100);   // recoloured per circuit by setWeather
 
   // Lighting: a broad sky term plus one sun that casts the car shadows, and a
   // cool fill from the opposite side so the bodywork is never a silhouette.
-  const hemi = new THREE.HemisphereLight(0xdcecfb, 0x3d4434, 2.15);
+  // Every circuit gets its own hour of the day, derived from its name, so a
+  // season does not look like the same afternoon five times. Nothing about it
+  // is random at run time: the same circuit is always the same light.
+  const HOURS = [
+    { name: 'noon', sun: [180, 260, 120], warm: 0xfff6e6, sky: 0x2a4f86, hor: 0x9fb8cf, exp: 1.34, amb: 2.15 },
+    { name: 'afternoon', sun: [230, 150, 60], warm: 0xffe9c4, sky: 0x2f5a93, hor: 0xc0cbd4, exp: 1.30, amb: 2.00 },
+    { name: 'evening', sun: [300, 70, -40], warm: 0xffcf96, sky: 0x1d3a6b, hor: 0xe0a06a, exp: 1.22, amb: 1.70 },
+    { name: 'overcast', sun: [120, 320, 200], warm: 0xeef2f7, sky: 0x4a5a6b, hor: 0xb8c2cb, exp: 1.28, amb: 2.45 },
+  ];
+  const hourIdx = (() => {
+    const id = (track.circuit && track.circuit.id) || '';
+    let hsh = 0;
+    for (let i = 0; i < id.length; i++) hsh = (hsh * 31 + id.charCodeAt(i)) >>> 0;
+    return HOURS[hsh % HOURS.length];
+  })();
+
+  const hemi = new THREE.HemisphereLight(0xdcecfb, 0x3d4434, hourIdx.amb);
   scene.add(hemi);
   const fill = new THREE.DirectionalLight(0x9fc4f0, 0.55);
   fill.position.set(-160, 120, -200);
   scene.add(fill);
   const sun = new THREE.DirectionalLight(0xfff1d8, 2.9);
-  sun.position.set(180, 260, 120);
+  sun.position.set(hourIdx.sun[0], hourIdx.sun[1], hourIdx.sun[2]);
+  sun.color.setHex(hourIdx.warm);
   if (quality.shadows) {
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
@@ -226,8 +250,11 @@ export function createRaceScene(canvas, track, opts = {}) {
   scene.add(sun);
   scene.add(sun.target);
 
+  renderer.toneMappingExposure = hourIdx.exp;
+
   const circuit = buildTrackMesh(track, quality);
   scene.add(circuit);
+  if (circuit.userData.wetables) scene._surfaces.push(...circuit.userData.wetables);
 
   /** The line a car takes if nobody is in the way. Mirrors the race engine. */
   // The same line the cars drive, so the rubber is laid where they actually go.
@@ -262,6 +289,38 @@ export function createRaceScene(canvas, track, opts = {}) {
   // Barriers, hoardings, gravel, grandstands, trees and the gantry.
   scene.add(buildWorld(track, { quality, racingLine: racingLineAt }));
 
+  // A contact shadow under every car. Only a handful cast a real shadow —
+  // a shadow map is a second pass over the geometry — but a car with nothing
+  // underneath it looks like it is hovering, so every one gets a dark ellipse
+  // and all twenty of them are a single draw call.
+  const blobs = (() => {
+    const tex = (() => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d');
+      const rad = g.createRadialGradient(32, 32, 2, 32, 32, 31);
+      rad.addColorStop(0, 'rgba(0,0,0,0.85)');
+      rad.addColorStop(0.55, 'rgba(0,0,0,0.42)');
+      rad.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = rad; g.fillRect(0, 0, 64, 64);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+    const mesh = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0.62 }),
+      24);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 1;
+    scene.add(mesh);
+    return mesh;
+  })();
+  const _m4 = new THREE.Matrix4();
+  const _mr = new THREE.Matrix4();
+  const _sc = new THREE.Vector3();
+  const _hide = new THREE.Matrix4().makeScale(0, 0, 0);
+
   // Smoke and dust, for the moments something goes wrong.
   const puffs = createPuffs(scene, quality.tier === 'low' ? 40 : 96);
 
@@ -287,8 +346,10 @@ export function createRaceScene(canvas, track, opts = {}) {
     tilt: 0.22,             // 0 = broadcast chase, 1 = straight down
     targets: [null, null],
     timeScale: 1,           // the camera has to turn as fast as the car does
+    wet: 0,
     follow: [new THREE.Vector3(), new THREE.Vector3()],
     heading: [0, 0],
+    shakeT: 0,
   };
 
   // ---- cars -------------------------------------------------------------
@@ -336,6 +397,12 @@ export function createRaceScene(canvas, track, opts = {}) {
       smoothU: null,
       smoothLat: null,
       yaw: 0,
+      // Detail bookkeeping: see applyDetail().
+      alive: true,
+      isPlayer: !!entry.isPlayer,
+      dist: 0,
+      lod: -1,
+      shadow: null,
     };
     cars.set(entry.id, rec);
     return rec;
@@ -387,8 +454,7 @@ export function createRaceScene(canvas, track, opts = {}) {
       const rec = cars.get(d.id);
       if (!rec) continue;
       const out = d.status === 'retired';
-      rec.model.group.visible = !out;
-      if (rec.marker) rec.marker.visible = !out;
+      rec.alive = !out;
       if (out) { rec.smoothU = null; continue; }
 
       const targetLat = d.lateral ?? 0;
@@ -437,16 +503,135 @@ export function createRaceScene(canvas, track, opts = {}) {
         const side = (i % 2 === 0) ? -1 : 1;
         w.compression = THREE.MathUtils.clamp(0.5 + k * side * 140, 0.18, 0.86);
       }
+      // Braking and throttle are not simulated, but they are implied: the solved
+      // speed profile says what the car is doing, and the rate of change of that
+      // is the pedal. It is what lights the brake discs and throws the smoke.
+      const dv = (rec.speed - (rec.lastSpeed ?? rec.speed)) / Math.max(1e-3, rd);
+      rec.lastSpeed = rec.speed;
+      const brake = Math.max(0, Math.min(1, -dv / 26));
+      const throttle = Math.max(0, Math.min(1, 0.25 + dv / 12));
+      rec.brake = brake;
+      // Hard on the brakes on a worn tyre picks up a wheel. It is the same pool
+      // the spins and the gravel use.
+      if (brake > 0.78 && rec.speed > 28 && Math.random() < rd * (0.5 + brake)) {
+        puffs.emit(rec.pos.x, rec.pos.y, rec.pos.z, 'smoke', 1);
+      }
+      // In the wet the spray is the thing you actually see, so it comes off
+      // every car that is moving, near the camera, all the time.
+      if (state.wet > 0.18 && rec.speed > 24 && rec.lod < 2
+          && Math.random() < rd * (2 + state.wet * 8)) {
+        puffs.emit(rec.pos.x - Math.sin(rec.heading) * 2.4, rec.pos.y,
+          rec.pos.z - Math.cos(rec.heading) * 2.4, 'spray', 1);
+      }
+
       rec.model.setTyreCompound(d.tyre || 'medium');
       rec.model.setDRS(!!d.drs);
+      // A car two hundred metres away does not need its suspension solved. The
+      // wheels still turn — it is the per-corner work that is skipped.
+      if (rec.lod >= 2 && !rec.isPlayer) continue;
       rec.model.update({
         wheels: rec.wheels,
         speed: rec.speed,
         steer,
-        gForce: { lat: k * rec.speed * rec.speed, lon: 0 },
-        throttle: 0.8, brake: 0, rpm: 11000,
+        gForce: { lat: k * rec.speed * rec.speed, lon: -dv },
+        throttle,
+        brake,
+        rpm: 5200 + Math.min(1, rec.speed / 92) * 7300,
       }, rd);
     }
+
+    applyDetail();
+
+    // Shadows follow the cars, squashed a little by speed so a quick car reads
+    // as quick even from above.
+    let bi = 0;
+    for (const rec of cars.values()) {
+      if (bi >= 24) break;
+      if (!rec.alive || !rec.model.group.visible) { blobs.setMatrixAt(bi++, _hide); continue; }
+      const len = 5.6 + Math.min(1.6, rec.speed * 0.02);
+      _m4.makeRotationX(-Math.PI / 2);
+      _m4.multiply(_mr.makeRotationZ(-rec.heading));
+      _m4.scale(_sc.set(3.4, len, 1));
+      _m4.setPosition(rec.pos.x, rec.pos.y + 0.035, rec.pos.z);
+      blobs.setMatrixAt(bi++, _m4);
+    }
+    while (bi < 24) blobs.setMatrixAt(bi++, _hide);
+    blobs.instanceMatrix.needsUpdate = true;
+  }
+
+  /**
+   * Twenty cars at full detail is about six hundred draw calls a frame, and a
+   * phone will not do that. Detail is spent where it can be seen: the cars near
+   * the camera get the real model, the ones down the road get the cheap one,
+   * and the ones a quarter of a mile away are not drawn at all. Only a handful
+   * cast shadows, because a shadow map costs a second pass over the geometry.
+   */
+  const _byDist = [];
+  function applyDetail() {
+    const cam = state.mode === 'split' ? camA : camA;
+    const eye = cam.position;
+    _byDist.length = 0;
+    for (const rec of cars.values()) {
+      if (!rec.alive) { rec.model.group.visible = false; if (rec.marker) rec.marker.visible = false; continue; }
+      rec.dist = rec.pos.distanceTo(eye);
+      _byDist.push(rec);
+    }
+    _byDist.sort((a, b) => a.dist - b.dist);
+
+    const thin = thrift > 0 || quality.tier !== 'high';
+    const far = (state.mode === 'split' ? 200 : 260) * (thin ? 0.72 : 1);
+    const shadowBudget = (quality.shadows && !thrift) ? (state.mode === 'split' ? 2 : 4) : 0;
+    const nearCut = (state.mode === 'split' ? 24 : 30) * (thin ? 0.7 : 1);
+    const midCut = (state.mode === 'split' ? 70 : 100) * (thin ? 0.7 : 1);
+
+    // On a small machine, draw the cars that are actually in the fight and let
+    // the timing tower speak for the rest. Nine cars is a whole battle.
+    const maxDrawn = thin ? (quality.tier === 'low' ? 8 : 12) : _byDist.length;
+
+    for (let i = 0; i < _byDist.length; i++) {
+      const rec = _byDist[i];
+      // Hysteresis: a car already on screen keeps its place until it is clearly
+      // out of the picture, or the ones on the boundary blink in and out.
+      const cut = rec.model.group.visible ? maxDrawn + 3 : maxDrawn;
+      if (i >= cut && !rec.isPlayer) {
+        rec.model.group.visible = false;
+        if (rec.marker) rec.marker.visible = false;
+        continue;
+      }
+      // In split view a car can be far from camA and right beside camB, so the
+      // second camera gets a vote before anything is hidden.
+      let d = rec.dist;
+      if (state.mode === 'split') d = Math.min(d, rec.pos.distanceTo(camB.position));
+      const show = rec.isPlayer || d < far;
+      rec.model.group.visible = show;
+      if (rec.marker) rec.marker.visible = show;
+      if (!show) continue;
+      const lv = d < nearCut ? 0 : d < midCut ? 1 : 2;
+      const capped = Math.max(lv, quality.carLod === 2 ? 2 : lv);
+      if (rec.lod !== capped) { rec.model.setLOD(capped); rec.lod = capped; }
+      const wantShadow = i < shadowBudget && d < 90;
+      if (rec.shadow !== wantShadow) { rec.model.setShadows?.(wantShadow); rec.shadow = wantShadow; }
+    }
+  }
+
+  /**
+   * If the machine cannot hold a frame, take something away rather than letting
+   * it stutter: shadows first, then resolution, then the last of the detail.
+   */
+  let frameEma = 16;
+  let thrift = 0;
+  function adapt(rd) {
+    frameEma += (Math.min(0.2, rd) * 1000 - frameEma) * 0.04;
+    if (frameEma > 30 && thrift < 3) setThrift(thrift + 1);
+    else if (frameEma < 15 && thrift > 0) setThrift(thrift - 1);
+  }
+  function setThrift(level) {
+    thrift = level;
+    if (level >= 1 && quality.shadows) { renderer.shadowMap.enabled = false; }
+    if (level < 1 && quality.shadows) { renderer.shadowMap.enabled = true; }
+    const pr = Math.min(window.devicePixelRatio || 1, quality.pixelRatio)
+      * (level >= 2 ? 0.75 : 1) * (level >= 3 ? 0.8 : 1);
+    if (Math.abs(renderer.getPixelRatio() - pr) > 0.02) { renderer.setPixelRatio(pr); resize(); }
   }
 
   // ---- camera update ----------------------------------------------------
@@ -473,7 +658,14 @@ export function createRaceScene(canvas, track, opts = {}) {
     const up = Math.sin(pitch) * d;
     const sh = Math.sin(state.heading[slot]);
     const ch = Math.cos(state.heading[slot]);
-    cam.position.set(f.x - sh * back, f.y + up, f.z - ch * back);
+    // A hand-held wobble that grows with speed and dies away as the camera
+    // climbs. From above it would just look like a fault.
+    const rec2 = rec;
+    const amp = (1 - state.tilt) * Math.min(1, (rec2.speed || 0) / 85) * 0.5;
+    const tt = (state.shakeT += 0.016);
+    const jx = (Math.sin(tt * 23.3) + Math.sin(tt * 37.7) * 0.6) * amp * 0.16;
+    const jy = (Math.sin(tt * 19.1) + Math.sin(tt * 29.3) * 0.5) * amp * 0.12;
+    cam.position.set(f.x - sh * back + jx, f.y + up + jy, f.z - ch * back);
     cam.up.set(0, 1, 0);
     // Aim down the road rather than at the car, so the car sits low in frame
     // and what you are looking at is where he is going.
@@ -486,7 +678,7 @@ export function createRaceScene(canvas, track, opts = {}) {
     const halfV = (cam.fov * Math.PI / 180) / 2;
     cam.rotateX(-halfV * 0.30 * (1 - state.tilt));
     sun.target.position.copy(f);
-    sun.position.set(f.x + 120, f.y + 210, f.z + 90);
+    sun.position.set(f.x + hourIdx.sun[0] * 0.55, f.y + hourIdx.sun[1] * 0.8, f.z + hourIdx.sun[2] * 0.55);
     if (sun.castShadow) {
       const d = Math.max(55, state.zoom * 1.25);
       if (Math.abs(sun.shadow.camera.right - d) > 8) {
@@ -545,6 +737,7 @@ export function createRaceScene(canvas, track, opts = {}) {
   }
 
   function render(dt) {
+    adapt(dt);
     puffs.update(dt, state.mode === 'split' ? camB : camA);
     if (state.mode === 'split') {
       // Side by side, not stacked. A stacked pane on a wide panel is four times
@@ -573,15 +766,25 @@ export function createRaceScene(canvas, track, opts = {}) {
 
   function setWeather(w) {
     const wet = w?.wetness ?? 0;
+    state.wet = wet;
+    // A wet circuit is darker and shinier, which is most of what tells you it
+    // is wet before the spray starts.
+    if (scene._surfaces) {
+      for (const m of scene._surfaces) {
+        m.roughness = m.userData.dryRough * (1 - wet * 0.72);
+        m.color.copy(m.userData.dryColor).multiplyScalar(1 - wet * 0.30);
+        m.needsUpdate = false;
+      }
+    }
     hemi.intensity = 2.15 - wet * 0.75;
     sun.intensity = 2.9 - wet * 2.2;
     fill.intensity = 0.55 + wet * 0.35;
     const sky = scene._sky;
     if (sky) {
-      sky.uniforms.uTop.value.setHex(wet > 0.4 ? 0x33414f : 0x2a4f86).lerp(new THREE.Color(0x36404b), wet * 0.6);
-      sky.uniforms.uHorizon.value.setHex(wet > 0.4 ? 0x6f7b88 : 0x9fb8cf);
+      sky.uniforms.uTop.value.setHex(wet > 0.4 ? 0x33414f : hourIdx.sky).lerp(new THREE.Color(0x36404b), wet * 0.6);
+      sky.uniforms.uHorizon.value.setHex(wet > 0.4 ? 0x6f7b88 : hourIdx.hor);
     }
-    scene.fog.color.setHex(wet > 0.4 ? 0x6f7b88 : 0x9fb8cf);
+    scene.fog.color.setHex(wet > 0.4 ? 0x6f7b88 : hourIdx.hor);
     scene.fog.far = 2100 - wet * 1100;
     for (const rec of cars.values()) rec.model.setRainLight(wet > 0.25);
   }

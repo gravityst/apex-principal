@@ -198,6 +198,24 @@ function openMenu() {
       }),
       h('div', {}, h('b', {}, 'Race engineer runs strategy when you do not'),
         h('div', { class: 'tiny dim' }, 'If you leave a car alone, it will pit on worn tyres and react to rain by itself. Turn this off for full manual control.'))),
+    h('div', { style: { padding: '12px 0 4px' } },
+      h('b', {}, 'Difficulty'),
+      h('div', { class: 'tiny dim', style: { margin: '3px 0 9px' } },
+        'A handicap on the rest of the field, and nothing else — it does not touch their development, their money or their decisions, only how hard they are to beat on Sunday.'),
+      h('div', { class: 'btnrow' }, [
+        ['relaxed', 'Relaxed', 'a third of a second a lap your way'],
+        ['normal', 'Normal', 'no handicap either way'],
+        ['brutal', 'Brutal', 'a third of a second a lap against you'],
+      ].map(([id, name, blurb]) => h('button', {
+        class: `btn sm ${(state.settings.difficulty || 'normal') === id ? 'on' : ''}`,
+        title: blurb,
+        onClick: () => {
+          state.settings.difficulty = id;
+          app.weekend = null;                  // takes effect from the next session
+          app.save(); close(); openMenu();
+        },
+      }, name)))),
+
     h('h3', { style: { marginTop: '18px' } }, 'About'),
     h('p', { class: 'small muted' },
       'Built on the physics of APEX F1. Lap times come from a quasi-steady-state solver running over the real circuit geometry — every development point moves a genuine physical parameter. Teams, drivers, sponsors and circuits are invented.'),

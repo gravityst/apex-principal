@@ -64,19 +64,24 @@ export function renderRaceScreen(app, root, race, round) {
   const lapBox = h('div', { class: 'lapbox' },
     h('span', { class: 'lk' }, 'LAP'), lapNum, lapTot);
   const chipTrack = infoChip('TRACK');
+  const chipSky = infoChip('FORECAST');
   const chipFast = infoChip('FASTEST LAP');
   const chipLead = infoChip('LEADER');
   const ovTop = h('div', { class: 'ov top' }, lapBox,
-    h('div', { class: 'chips' }, chipTrack.el, chipFast.el, chipLead.el));
+    h('div', { class: 'chips' }, chipTrack.el, chipSky.el, chipFast.el, chipLead.el));
 
   const ovFlags = h('div', { class: 'ov flags' });
+  const miniCanvas = h('canvas', { class: 'minimap' });
+  const ovMini = h('div', { class: 'ov mini' }, miniCanvas);
+  const lightsRow = h('div', { class: 'lights' }, [0, 1, 2, 3, 4].map(() => h('i', {})));
+  const ovLights = h('div', { class: 'ov startlights', style: { display: 'none' } }, lightsRow);
   const ovTower = h('div', { class: 'ov tower2' });
   const ovCall = h('div', { class: 'callout', style: { display: 'none' } });
   const deckRow = h('div', { class: 'decks' });
   const ovBottom = h('div', { class: 'ov bottom' }, ovCall, deckRow);
 
   const stage = h('div', { class: 'stage' },
-    canvas3d, canvas2d, labelLayer, splitLabels, ovTop, ovFlags, ovTower, ovBottom);
+    canvas3d, canvas2d, labelLayer, splitLabels, ovTop, ovFlags, ovMini, ovTower, ovLights, ovBottom);
 
   // ---- the dock ---------------------------------------------------------
   const speedBtns = {};
@@ -105,7 +110,22 @@ export function renderRaceScreen(app, root, race, round) {
       class: 'dbtn sim', onClick: () => {
         app.speed = 0; race.autoStrategy = true; race.simulateToEnd(); finish();
       },
-    }, 'Sim rest'));
+    }, 'Sim rest'),
+    h('button', {
+      class: 'dbtn', onClick: () => {
+        // Run on until one of yours is in the pit lane or the flag falls. Most
+        // of a stint is waiting; this is the skip button for it.
+        const before = mine.map((c) => c.stops);
+        let guard = 0;
+        while (race.state === 'racing' && guard++ < 40000) {
+          race.step(0.25);
+          if (mine.some((c, i) => c.stops > before[i] || c.status === 'pit')) break;
+        }
+        if (race.state !== 'racing') { finish(); return; }
+        acc = 0;
+        paintPanels(race.order || race.updateOrder());
+      },
+    }, 'To my stop'));
 
   // ---- the sheet --------------------------------------------------------
   const stratSlot = h('div', { class: 'stratrow' });
@@ -186,11 +206,21 @@ export function renderRaceScreen(app, root, race, round) {
     // Lap phase is what the simulation steps in; the circuit is measured in
     // metres. The engine owns the mapping, so hand it to the view.
     scene.setWarp(race.lapPos);
+    scene.setWeather(race.weather);
+    // A hook for measuring, not for playing: ?debug in the URL only.
+    try {
+      if (location.search.indexOf('debug') >= 0) window.__apex = { race, scene, app };
+    } catch { /* not important */ }
   } else {
     canvas3d.style.display = 'none';
     canvas2d.style.display = 'block';
     map2d = createTrackMap(canvas2d, track);
   }
+
+  // A small plan of the circuit, because a chase camera tells you everything
+  // about the next corner and nothing about where you are on the lap.
+  let mini = null;
+  try { mini = createTrackMap(miniCanvas, track, { compact: true }); } catch { mini = null; }
 
   const sceneZoom = () => scene?.getZoom() ?? 48;
   function setZoom(z) { if (scene) { scene.setZoom(z); app.camZoom = scene.getZoom(); } }
@@ -300,7 +330,7 @@ export function renderRaceScreen(app, root, race, round) {
   canvas3d.addEventListener('touchend', () => { pinch = 0; }, { passive: true });
 
   // ---- built once, updated in place -------------------------------------
-  const decks = mine.map((c) => makeCarDeck(race, c));
+  const decks = mine.map((c) => makeCarDeck(race, c, mine));
   deckRow.replaceChildren(...decks.map((d) => d.el));
   const briefs = mine.map((c) => makeStrategyPanel(race, c));
   stratSlot.replaceChildren(...briefs.map((b) => b.el));
@@ -314,12 +344,14 @@ export function renderRaceScreen(app, root, race, round) {
   const towerPool = new Map();
   const radioMemo = new Map();
   let lastFeedLen = -1;
+  let lastWet = null;
   let stopped = false;
   app.stopLoop?.();
   app.stopLoop = () => {
     stopped = true;
     document.body.classList.remove('racing');
     window.removeEventListener('resize', onResize);
+    window.removeEventListener('keydown', onKey);
     ro?.disconnect();
     scene?.dispose();
   };
@@ -376,7 +408,11 @@ export function renderRaceScreen(app, root, race, round) {
 
       scene.render(real);
       labelAcc += real;
-      if (labelAcc >= 1 / 14) { labelAcc = 0; paintLabels(order); }
+      if (labelAcc >= 1 / 14) {
+        labelAcc = 0;
+        paintLabels(order);
+        if (mini) { try { mini.draw(order, race.weather, { labels: false, compact: true }); } catch { mini = null; } }
+      }
     } else if (map2d) {
       map2d.draw(order, race.weather, { labels: true });
     } else if (race.fx.length) {
@@ -504,7 +540,7 @@ export function renderRaceScreen(app, root, race, round) {
       if (!el) {
         el = h('div', { class: 't2row' },
           h('span', { class: 'p' }), h('i', {}), h('span', { class: 'nm' }),
-          h('span', { class: 'gp' }), h('span', { class: 'ty' }));
+          h('span', { class: 'mv' }), h('span', { class: 'gp' }), h('span', { class: 'ty' }));
         el.children[1].style.background = c.team.colors.primary;
         towerPool.set(key, el);
       }
@@ -513,11 +549,14 @@ export function renderRaceScreen(app, root, race, round) {
       el.className = `t2row ${c.isPlayer ? 'me' : ''} ${cls}`;
       el.children[0].textContent = c.status === 'retired' ? '–' : c.position;
       el.children[2].textContent = short(c.driver);
-      el.children[3].textContent = c.status === 'retired' ? 'DNF'
+      const moved = (c.gridPos || c.position) - c.position;
+      el.children[3].textContent = c.status === 'retired' ? '' : moved > 0 ? `▲${moved}` : moved < 0 ? `▼${-moved}` : '';
+      el.children[3].className = `mv ${moved > 0 ? 'up' : moved < 0 ? 'down' : ''}`;
+      el.children[4].textContent = c.status === 'retired' ? 'DNF'
         : c.status === 'pit' ? 'PIT'
           : c.position === 1 ? 'LEADER' : gapTime(c.interval);
-      el.children[4].textContent = (TYRE_COMPOUNDS[c.tyre]?.short || '?') + Math.floor(c.tyreAge);
-      el.children[4].className = `ty ty-${c.tyre}`;
+      el.children[5].textContent = (TYRE_COMPOUNDS[c.tyre]?.short || '?') + Math.floor(c.tyreAge);
+      el.children[5].className = `ty ty-${c.tyre}`;
       els.push(el);
     }
     ovTower.replaceChildren(...els);
@@ -545,6 +584,12 @@ export function renderRaceScreen(app, root, race, round) {
     lapNum.textContent = String(Math.min(race.lap + 1, race.lapsTotal));
     lapTot.textContent = `/${race.lapsTotal}`;
     chipTrack.set(`${race.weather.state} · ${race.weather.trackTemp.toFixed(0)}°C`);
+    chipSky.set(race.forecast ? race.forecast.text : '—');
+    if (scene && Math.abs((lastWet ?? -9) - race.weather.wetness) > 0.02) {
+      lastWet = race.weather.wetness;
+      scene.setWeather(race.weather);
+    }
+    chipSky.el.className = `chip ${race.forecast && race.forecast.wet && race.forecast.laps < 8 ? 'alert' : ''}`;
     chipFast.set(race.fastestLap ? `${race.fastestLap.driver} ${lapTime(race.fastestLap.time)}` : '—');
     chipLead.set(order[0] ? `${short(order[0].driver)} · ${order[0].team.short}` : '—');
 
@@ -592,28 +637,48 @@ export function renderRaceScreen(app, root, race, round) {
     }
   }
 
+  // Twenty rows of eleven cells, rebuilt five times a second, is two hundred
+  // and twenty elements a paint. Build them once and write the text.
+  const bigRows = new Map();
+  let bigHead = null;
   function paintBigTower(order) {
-    timingSlot.replaceChildren(
-      h('div', { class: 'bt hd' },
+    if (!bigHead) {
+      bigHead = h('div', { class: 'bt hd' },
         h('span', {}, 'POS'), h('span', {}, ''), h('span', {}, 'DRIVER'), h('span', {}, 'TEAM'),
         h('span', { class: 'r' }, 'GAP'), h('span', { class: 'r' }, 'INTERVAL'),
         h('span', { class: 'c' }, 'TYRE'), h('span', { class: 'r' }, 'AGE'),
-        h('span', { class: 'r' }, 'STOPS'), h('span', { class: 'r' }, 'LAST'), h('span', { class: 'r' }, 'BEST')),
-      ...order.map((c) => {
-        const cls = c.status === 'retired' ? 'out' : c.status === 'pit' ? 'inpit' : '';
-        return h('div', { class: `bt ${c.isPlayer ? 'me' : ''} ${cls}` },
-          h('span', {}, c.status === 'retired' ? '–' : c.position),
-          h('i', { style: { background: c.team.colors.primary } }),
-          h('span', { class: 'nm' }, c.driver.name),
-          h('span', { class: 'tm' }, c.team.short),
-          h('span', { class: 'r mono' }, c.status === 'retired' ? 'DNF' : c.position === 1 ? '—' : gapTime(c.gapToLeader ?? c.interval)),
-          h('span', { class: 'r mono' }, c.position === 1 || c.status === 'retired' ? '—' : gapTime(c.interval)),
-          h('span', { class: `c ty ty-${c.tyre}` }, TYRE_COMPOUNDS[c.tyre]?.short || '?'),
-          h('span', { class: 'r mono' }, `${Math.floor(c.tyreAge)}`),
-          h('span', { class: 'r mono' }, `${c.stops}`),
-          h('span', { class: 'r mono' }, c.lastLapTime ? lapTime(c.lastLapTime) : '—'),
-          h('span', { class: 'r mono' }, c.bestLap ? lapTime(c.bestLap) : '—'));
-      }));
+        h('span', { class: 'r' }, 'STOPS'), h('span', { class: 'r' }, 'LAST'), h('span', { class: 'r' }, 'BEST'));
+    }
+    const rows = [bigHead];
+    for (const c of order) {
+      let el = bigRows.get(c.id);
+      if (!el) {
+        el = h('div', { class: 'bt' },
+          h('span', {}), h('i', { style: { background: c.team.colors.primary } }),
+          h('span', { class: 'nm' }, c.driver.name), h('span', { class: 'tm' }, c.team.short),
+          h('span', { class: 'r mono' }), h('span', { class: 'r mono' }),
+          h('span', { class: 'c ty' }), h('span', { class: 'r mono' }),
+          h('span', { class: 'r mono' }), h('span', { class: 'r mono' }), h('span', { class: 'r mono' }));
+        bigRows.set(c.id, el);
+      }
+      const k = el.children;
+      const cls = c.status === 'retired' ? 'out' : c.status === 'pit' ? 'inpit' : '';
+      el.className = `bt ${c.isPlayer ? 'me' : ''} ${cls}`;
+      k[0].textContent = c.status === 'retired' ? '–' : c.position;
+      k[2].textContent = c.driver.name;
+      k[4].textContent = c.status === 'retired' ? 'DNF' : c.position === 1 ? '—' : gapTime(c.gapToLeader ?? c.interval);
+      k[5].textContent = c.position === 1 || c.status === 'retired' ? '—' : gapTime(c.interval);
+      k[6].textContent = TYRE_COMPOUNDS[c.tyre]?.short || '?';
+      k[6].className = `c ty ty-${c.tyre}`;
+      k[7].textContent = `${Math.floor(c.tyreAge)}`;
+      k[8].textContent = `${c.stops}`;
+      const purple = race.fastestLap && race.fastestLap.car === c.id;
+      k[9].textContent = c.lastLapTime ? lapTime(c.lastLapTime) : '—';
+      k[10].textContent = c.bestLap ? lapTime(c.bestLap) : '—';
+      k[10].className = `r mono ${purple ? 'purple' : ''}`;
+      rows.push(el);
+    }
+    timingSlot.replaceChildren(...rows);
   }
 
   setFilter(app.radioFilter || 'team');
@@ -622,6 +687,42 @@ export function renderRaceScreen(app, root, race, round) {
   paintViews();
   paintDock();
   setTab(openTab);
+  // Lights out. Five reds, then they go, and the overlay goes with them.
+  if (race.lap === 0 && race.time < 1.5) {
+    ovLights.style.display = '';
+    let lit = 0;
+    const lamp = setInterval(() => {
+      if (stopped) { clearInterval(lamp); return; }
+      if (lit < 5) { lightsRow.children[lit].className = 'on'; lit++; return; }
+      clearInterval(lamp);
+      ovLights.className = 'ov startlights out';
+      setTimeout(() => { ovLights.style.display = 'none'; }, 700);
+    }, 420);
+  }
+
+  /**
+   * Keys, because reaching for a mouse while two cars are fighting is not how
+   * anyone wants to call a race. Space pauses, the number keys set the speed,
+   * C and V cycle the camera and the view, and S/T/R open the panels.
+   */
+  function onKey(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const k = e.key.toLowerCase();
+    if (k === ' ') { app.speed = app.speed > 0 ? 0 : 1; paintDock(); e.preventDefault(); return; }
+    const n = '01234'.indexOf(e.key);
+    if (n > 0) { app.speed = SPEEDS[n]; paintDock(); return; }
+    if (k === 'c') { const o = camOptions(); const i = o.findIndex((x) => x.id === currentCam()); pickCam(o[(i + 1) % o.length].id); return; }
+    if (k === 'v') { const i = VIEWS.findIndex((x) => x.id === app.camView); pickView(VIEWS[(i + 1) % VIEWS.length]); return; }
+    if (k === 's') setTab('strategy');
+    else if (k === 't') setTab('timing');
+    else if (k === 'r') setTab('radio');
+    else if (k === '+' || k === '=') setZoom(sceneZoom() / 1.25);
+    else if (k === '-') setZoom(sceneZoom() * 1.25);
+  }
+  window.addEventListener('keydown', onKey);
+
   fitHeight();
   window.addEventListener('resize', onResize);
   paintPanels(race.order || race.updateOrder());
@@ -637,7 +738,7 @@ function infoChip(label) {
 // The deck — one driver, three buttons
 // ---------------------------------------------------------------------------
 
-function makeCarDeck(race, c) {
+function makeCarDeck(race, c, mine) {
   const posEl = h('span', { class: 'dpos' });
   const nameEl = h('span', { class: 'dnm' });
   const tyreEl = h('span', { class: 'dty' });
@@ -705,6 +806,32 @@ function makeCarDeck(race, c) {
     tyreEl,
     h('div', { class: 'tbar' }, tyreFill),
     tyreLife, tyreNote);
+
+  // Team orders. Only offered when it is actually a question: your other car is
+  // right behind and going quicker.
+  const teamRow = h('div', { class: 'trow' });
+  function paintTeamRow() {
+    const other = (mine || []).find((x) => x !== c);
+    if (!other || other.status !== 'running' || c.status !== 'running') {
+      teamRow.replaceChildren(h('span', { class: 'tiny dim' }, 'Nothing to ask for.'));
+      return;
+    }
+    const order = race.order || race.updateOrder();
+    const ia = order.indexOf(c), ib = order.indexOf(other);
+    if (ia < 0 || ib < 0) return;
+    const ahead = ia < ib ? c : other;
+    const behind = ia < ib ? other : c;
+    const gap = Math.abs(behind.distance - ahead.distance) / Math.max(30, race.currentSpeed(behind));
+    if (ahead !== c || gap > 3.2) {
+      teamRow.replaceChildren(h('span', { class: 'tiny dim' },
+        ahead === c ? `${short(behind.driver)} is ${gap.toFixed(1)}s back — too far to ask.` : `He is behind ${short(ahead.driver)}.`));
+      return;
+    }
+    teamRow.replaceChildren(h('button', {
+      class: 'tbtn warn', onClick: () => { race.swapCars(c.id, behind.id); update(); },
+    }, `Let ${short(behind.driver)} through`),
+      h('span', { class: 'tiny dim', style: { alignSelf: 'center' } }, `${gap.toFixed(1)}s behind`));
+  }
 
   const tray = h('div', { class: 'dtray', style: { display: 'none' } });
   const noteEl = h('div', { class: 'dnote' });
@@ -795,6 +922,7 @@ function makeCarDeck(race, c) {
       ? `−${bh.interval.toFixed(1)} ${short(bh.driver)}` : 'last';
     lastEl.textContent = c.lastLapTime ? lapTime(c.lastLapTime) : '—';
     bestEl.textContent = c.bestLap ? lapTime(c.bestLap) : '—';
+    bestEl.className = `gv mono ${race.fastestLap && race.fastestLap.car === c.id ? 'purple' : ''}`;
 
     secRow.replaceChildren(...[0, 1, 2].map((i) => {
       const live = c.sectors[i], done = c.lastSectors[i], best = c.bestSectors[i];
@@ -852,8 +980,10 @@ function makeCarDeck(race, c) {
         h('div', { class: 'trow' }, ['harvest', 'balanced', 'deploy'].map((m) => h('button', {
           class: `tbtn ${c.ersMode === m ? 'on' : ''}`,
           onClick: () => { race.command(c.id, 'ers', m); update(); },
-        }, m))));
+        }, m))),
+        h('div', { class: 'trk' }, 'TEAM'), teamRow);
     }
+    if (trayOpen) paintTeamRow();
     tray.style.display = trayOpen ? '' : 'none';
     boxMore.textContent = trayOpen ? '▴' : '▾';
     for (const [t, b] of Object.entries(pitBtns)) b.disabled = finished || inPit || !!c.pitRequested;

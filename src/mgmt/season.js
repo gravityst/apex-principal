@@ -100,6 +100,7 @@ export function buildWeekend(state, round) {
   const race = createWeekend({
     track, round, entries, rng,
     autoStrategy: state.settings.autoStrategy,
+    difficulty: state.settings.difficulty || 'normal',
   });
   race.playerTeamId = state.playerTeamId;
   return race;

@@ -3783,6 +3783,17 @@ class CarModel {
     if (typeof pitchScale === 'number') this._pitchScale = pitchScale;
   }
 
+  /**
+   * Shadow casting, per car. A shadow map is a second pass over every caster,
+   * so twenty cars casting is twice the geometry submitted. The scene gives it
+   * to the few cars near the camera and takes it off the rest.
+   */
+  setShadows(on) {
+    if (this._shadowOn === on) return;
+    this._shadowOn = on;
+    this.group.traverse((o) => { if (o.isMesh) o.castShadow = on; });
+  }
+
   setLOD(level) {
     const lv = clamp(Math.round(level || 0), 0, 2);
     this.lodLevel = lv;

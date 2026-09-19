@@ -6,7 +6,8 @@
  * dots, the pit lane, the DRS zones and the sector boundaries.
  */
 
-export function createTrackMap(canvas, track) {
+export function createTrackMap(canvas, track, setup = {}) {
+  const compact = !!setup.compact;
   const ctx = canvas.getContext('2d');
   const pts = track.map.points;                 // normalised [0..1, 0..1]
   const circuit = track.circuit;
@@ -18,15 +19,17 @@ export function createTrackMap(canvas, track) {
   function layout() {
     const rect = canvas.getBoundingClientRect();
     dpr = Math.min(2, window.devicePixelRatio || 1);
-    const cssW = Math.max(220, rect.width || 480);
+    const cssW = Math.max(compact ? 104 : 220, rect.width || (compact ? 150 : 480));
     const aspect = track.map.aspect;
     // Keep the circuit's real proportions, inside a sensible box.
-    const cssH = Math.max(200, Math.min(520, cssW / Math.max(0.55, Math.min(2.1, aspect))));
+    const cssH = compact
+      ? Math.max(84, Math.min(180, cssW / Math.max(0.55, Math.min(2.1, aspect))))
+      : Math.max(200, Math.min(520, cssW / Math.max(0.55, Math.min(2.1, aspect))));
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
     canvas.style.height = `${cssH}px`;
     W = canvas.width; H = canvas.height;
-    pad = 22 * dpr;
+    pad = (compact ? 9 : 22) * dpr;
 
     const availW = W - pad * 2, availH = H - pad * 2;
     const s = Math.min(availW, availH * aspect);
@@ -75,8 +78,8 @@ export function createTrackMap(canvas, track) {
 
     // Surface.
     const wet = weather.wetness || 0;
-    ribbon(11, '#0f1622');
-    ribbon(8, wet > 0.45 ? '#2a3d52' : wet > 0.12 ? '#243444' : '#2b3446');
+    ribbon(compact ? 7 : 11, '#0f1622');
+    ribbon(compact ? 5 : 8, wet > 0.45 ? '#2a3d52' : wet > 0.12 ? '#243444' : '#2b3446');
 
     // Sectors.
     const sectors = circuit.sectors || [0.333, 0.666];
@@ -108,7 +111,7 @@ export function createTrackMap(canvas, track) {
     for (const c of list) {
       const [x, y] = PU(c.u);
       const col = c.team?.colors?.primary || '#888';
-      const r = (c.isPlayer ? 5.4 : 4.1) * dpr;
+      const r = (c.isPlayer ? (compact ? 3.9 : 5.4) : (compact ? 2.6 : 4.1)) * dpr;
 
       if (c.isPlayer) {
         ctx.beginPath();

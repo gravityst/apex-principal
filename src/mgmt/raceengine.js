@@ -35,10 +35,15 @@ const WET_COMPOUNDS = ['inter', 'wet'];
  * undriveable, and that is what makes a wrong call at the first spot of rain
  * cost a race.
  */
-export function tyreGrip(compound, wear, wetness) {
+export function tyreGrip(compound, wear, wetness, age = 9) {
   const c = TYRE_COMPOUNDS[compound];
   if (!c) return 1;
   let g = c.grip;
+
+  // A tyre that has just gone on is not yet a tyre. The out-lap and the first
+  // flying lap are worth real time, which is what makes an undercut a decision
+  // rather than a formality.
+  if (age < 2) g *= 0.955 + Math.min(1, age / 2) * 0.045;
 
   // Wear: gentle, then a cliff once the tyre is done.
   if (wear <= 0.75) g *= 1 - wear * 0.033;
@@ -102,6 +107,12 @@ export function createWeekend(opts) {
   const abrasion = 0.72 + (load / track.samples) * 46;
 
   // Pit lane geometry, straight out of the circuit definition.
+  // Difficulty is a handicap on the rest of the field, stated plainly rather
+  // than hidden in their car: it does not touch development, money or their
+  // decisions, only how hard they are to beat on Sunday.
+  const DIFFICULTY = { relaxed: 0.32, normal: 0, brutal: -0.30 };
+  const fieldHandicap = DIFFICULTY[opts.difficulty] ?? 0;
+
   const pit = circuit.pit || { entry: 0.95, exit: 0.05, speedLimit: 22.2 };
   const pitSpan = ((pit.exit - pit.entry) % 1 + 1) % 1;
   const pitLaneLength = pitSpan * track.length + (pit.laneOffset ?? 15) * 2;
@@ -229,12 +240,15 @@ export function createWeekend(opts) {
     flag: 'control', penalty: 'control',
     pit: 'pitlane',
     weather: 'control', crash: 'commentary', incident: 'commentary',
-    failure: 'commentary', overtake: 'commentary', race: 'commentary', quali: 'commentary',
+    chatter: 'driver',
+    failure: 'commentary', overtake: 'commentary', battle: 'commentary',
+    race: 'commentary', quali: 'commentary',
   };
   const PRIORITY = {
     crash: 'high', failure: 'high', flag: 'high', refusal: 'high',
     weather: 'high', order: 'normal', pit: 'normal', incident: 'normal',
-    race: 'high', quali: 'normal', overtake: 'low', team: 'normal',
+    race: 'high', quali: 'normal', overtake: 'low', battle: 'low', team: 'normal',
+    chatter: 'low',
   };
 
   function say(text, opts = {}) {
@@ -275,7 +289,7 @@ export function createWeekend(opts) {
 
   /** Current lap time for a car in seconds, at this instant. */
   function currentLapTime(c) {
-    const grip = tyreGrip(c.tyre, c.wear, weather.wetness);
+    const grip = tyreGrip(c.tyre, c.wear, weather.wetness, c.tyreAge);
     const ctx = {
       mode: c.mode,
       wet: weather.wetness,
@@ -296,6 +310,7 @@ export function createWeekend(opts) {
     if (c.ersMode === 'deploy' && c.ersCharge > 0.02) t -= 0.16;
     else if (c.ersMode === 'harvest') t += 0.22;
 
+    if (!c.isPlayer) t += fieldHandicap;
     if (race.safetyCar) t *= race.safetyCar.kind === 'sc' ? 1.62 : 1.34;
     return t;
   }
@@ -411,6 +426,21 @@ export function createWeekend(opts) {
       else if (state === 'dry') say('The track is drying. A dry line is appearing.', { kind: 'weather' });
     }
     weather.trackTemp = round.weather.track - weather.wetness * 12;
+
+    // A forecast, because a pit wall has one. The rain window is already in the
+    // weekend's seed; this only says how far away it is in laps.
+    race.forecast = null;
+    if (r) {
+      const lapsLeft = (x) => Math.round((x - f) * totalLaps);
+      if (f < r.start) {
+        const n = lapsLeft(r.start);
+        if (n <= 18) race.forecast = { text: n <= 1 ? 'Rain any moment' : `Rain in ~${n} laps`, wet: true, laps: n };
+      } else if (f <= r.end && weather.wetness > 0.1) {
+        const n = lapsLeft(r.end);
+        race.forecast = { text: n <= 1 ? 'Easing now' : `Drying in ~${n} laps`, wet: false, laps: n };
+      }
+    }
+    if (!race.forecast) race.forecast = { text: weather.wetness > 0.14 ? 'Staying wet' : 'Dry throughout', wet: weather.wetness > 0.14, laps: 99 };
   }
 
   // ---- practice ----------------------------------------------------------
@@ -631,6 +661,51 @@ export function createWeekend(opts) {
   function racingLine(u) { return LINE[trackAt(u)]; }
 
   /**
+   * The next corner worth a move, within about half a kilometre. An overtake
+   * happens somewhere specific — on the brakes for a corner — and aiming the
+   * whole manoeuvre at that point is what stops passes completing in the middle
+   * of a straight or, worse, halfway round a bend.
+   */
+  function nextApex(p) {
+    const n = track.samples;
+    const i0 = trackAt(p);
+    const steps = Math.max(10, Math.round(Math.min(0.16, 620 / track.length) * n));
+    let best = -1, bestK = 0.0022;
+    for (let k = 5; k < steps; k++) {
+      const kk = Math.abs(track.curv[(i0 + k) % n]);
+      if (kk > bestK) { bestK = kk; best = k; }
+    }
+    if (best < 0) return null;
+    const i = (i0 + best) % n;
+    return { u: i / n, metres: best * (track.length / n), k: track.curv[i] };
+  }
+
+  /** Zero to one with zero slope at both ends: slow, then the braking zone. */
+  function smootherstep(x) {
+    const t = Math.max(0, Math.min(1, x));
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  }
+
+  /** How far through the move a car is, as a share of the distance to be made up. */
+  function duelShape(duel, phase) {
+    if (duel.outcome === 'pass') {
+      // Out of the tow, hard on the brakes, then settle in front.
+      return smootherstep((phase - 0.08) / 0.84);
+    }
+    // A look up the inside that does not stick: alongside at the apex, back in
+    // line on the exit.
+    return Math.sin(Math.PI * smootherstep(phase)) * 0.92;
+  }
+
+  /** Where a car sits across the road while a move is happening. */
+  function duelEnvelope(duel, phase) {
+    if (duel.outcome === 'pass') {
+      return Math.min(1, phase * 2.6) * (1 - smootherstep((phase - 0.82) / 0.18));
+    }
+    return Math.sin(Math.PI * Math.min(1, phase * 1.02));
+  }
+
+  /**
    * Move the car across the track. Cars do not jump sideways, so the lateral
    * position is integrated at a real rate — about four metres a second, which
    * is roughly how long a switch of line actually takes.
@@ -645,14 +720,16 @@ export function createWeekend(opts) {
       // Down the pit lane, where the pit lane actually is.
       target = (pit.side === 'right' ? 1 : -1) * (pit.laneOffset ?? 15);
     } else if (c.duel) {
-      // Alongside: far enough over to be a second car abreast, and eased in
-      // and out so the move reads as a move.
-      const shape = Math.sin(Math.PI * Math.min(1, c.duel.t / c.duel.dur));
-      target = racingLine(p) + c.duel.side * Math.min(w * 0.62, 3.1) * Math.max(0.35, shape);
+      // Alongside: far enough over to be a second car abreast, eased in and out
+      // so the move reads as a move rather than a sidestep.
+      const env = duelEnvelope(c.duel, Math.min(1, c.duel.t / c.duel.dur));
+      target = racingLine(p) + c.duel.side * Math.min(w * 0.62, 3.2) * Math.max(0.22, env);
     } else if (c._launch) {
       target = (c._gridSide || 1) * Math.min(w * 0.44, 2.6);
     } else if (c.defending) {
-      target = racingLine(p) + c.defending * Math.min(w * 0.45, 2.1);
+      // The man being passed does not sit on the ideal line and wait for it. He
+      // moves across to cover, and comes back to the line as the move resolves.
+      target = racingLine(p) + c.defending * Math.min(w * 0.45, 2.3) * Math.max(0.2, c.defendEnv ?? 1);
     } else {
       // Twenty cars on one ideal line is a train, not a race. Each driver has
       // his own small bias, and a car sitting in someone's wake edges out of it
@@ -708,6 +785,31 @@ export function createWeekend(opts) {
       if (pos <= 0.0008) continue;
       c.u = phaseOf(c, pos);
       c.distance = c.lap * track.length + c.u * track.length;
+    }
+  }
+
+  /**
+   * Two cars alongside, and one of them gets it wrong. Both pay; the one who
+   * was doing the passing pays more, and the stewards take an interest.
+   */
+  function contact(attacker, victim) {
+    const hard = rng.chance(0.34);
+    attacker.damage = Math.min(1, attacker.damage + (hard ? 0.42 : 0.15));
+    victim.damage = Math.min(1, victim.damage + (hard ? 0.34 : 0.10));
+    attacker.incidentTimer += hard ? rng.range(7, 16) : rng.range(1.4, 3.6);
+    victim.incidentTimer += hard ? rng.range(5, 13) : rng.range(1.0, 2.8);
+    attacker.battleCooldown = 8; victim.battleCooldown = 6;
+    attacker.defending = 0; victim.defending = 0; victim.defendEnv = 0;
+    fx(attacker, 'smoke', hard ? 10 : 5);
+    fx(victim, 'dust', hard ? 8 : 3);
+    if (hard) {
+      attacker.penalty += 5;
+      say(`Contact at the apex — ${attacker.driver.name} into ${victim.driver.name}. Both cars are damaged and the stewards are looking at it.`,
+        { kind: 'crash', car: attacker.id, player: attacker.isPlayer || victim.isPlayer });
+      if (rng.chance(0.35)) deploySafetyCar('vsc', 'debris on the circuit');
+    } else {
+      say(`Wheel to wheel and they touch — ${attacker.driver.name} and ${victim.driver.name}. Both carry on.`,
+        { kind: 'incident', car: attacker.id, player: attacker.isPlayer || victim.isPlayer });
     }
   }
 
@@ -772,6 +874,58 @@ export function createWeekend(opts) {
     }
   }
 
+  /**
+   * The stewards. Running wide is worth time, and doing it repeatedly is worth
+   * five seconds. It gives a driver on the edge something to lose.
+   */
+  function rollTrackLimits(c, dtLaps) {
+    if (c.status !== 'running' || race.safetyCar) return;
+    const cons = c.driver.consistency ?? 0.88;
+    let p = 0.16 * (1 - cons);
+    if (c.mode === 'push') p *= 1.8;
+    if (c.defiance > 0) p *= 1.3;
+    p *= 1 + Math.max(0, c.wear - 0.7) * 0.9;
+    if (!rng.chance(p * dtLaps)) return;
+    c.limitStrikes = (c.limitStrikes || 0) + 1;
+    if (c.limitStrikes === 3) {
+      c.penalty += 5;
+      say(`${c.driver.name} has a third track-limits warning — five-second penalty, to be served at his stop.`,
+        { kind: 'penalty', car: c.id, player: c.isPlayer });
+    } else if (c.isPlayer) {
+      say(`Warning for track limits, ${c.driver.short || c.driver.name.split(' ').pop()}. That is ${c.limitStrikes} of three.`,
+        { kind: 'penalty', car: c.id, player: true });
+    }
+  }
+
+  /**
+   * A driver says things. Not because the simulation needs him to, but because
+   * a silent car is a spreadsheet and a talking one is a person.
+   */
+  const DRIVER_LINES = {
+    good: ['That is the balance I wanted. Keep it coming.', 'Car feels good. I can hold this.',
+      'Yes! That is a good one.', 'Happy with that. Same again.'],
+    tyres: ['Rears are going away on me.', 'I am starting to slide at the rear.',
+      'Front left is done, I am asking a lot of it.', 'Graining at the front. It will not last.'],
+    traffic: ['I am in his gearbox and I cannot get by.', 'Give me a plan, I am losing the front here.',
+      'He is slow in the corners and quick on the straight. I need help.'],
+    fuel: ['How is the fuel? I do not want to be lifting at the end.',
+      'Tell me now if I have to save, not on the last lap.'],
+    wet: ['It is getting greasy out here.', 'I have no idea where the grip is.',
+      'Standing water at the back of the circuit. Be careful with the calls.'],
+  };
+  function rollChatter(c, dtLaps) {
+    if (!c.isPlayer || c.status !== 'running') return;
+    if (!rng.chance(0.09 * dtLaps * 4)) return;
+    let bucket = 'good';
+    if (weather.wetness > 0.25 && rng.chance(0.6)) bucket = 'wet';
+    else if (c.wear > 0.72) bucket = 'tyres';
+    else if (c.dirtyAir > 0.5) bucket = 'traffic';
+    else if ((c.fuel ?? 99) < fuelPerLap * (totalLaps - c.lap) * 1.02) bucket = 'fuel';
+    else if (c.lastLapTime && c.bestLap && c.lastLapTime > c.bestLap + 1.2) return;
+    say(`${c.driver.name}: "${rng.pick(DRIVER_LINES[bucket])}"`,
+      { kind: 'chatter', from: 'driver', priority: 'low', car: c.id, player: true });
+  }
+
   function rollFailure(c, dtLaps) {
     if (c.status !== 'running') return;
     const perRace = c.phys.failureRate * (1 + c.damage * 1.6);
@@ -799,10 +953,14 @@ export function createWeekend(opts) {
 
       const gap = c.interval;
       c.dirtyAir = gap < 1.6 ? Math.min(1, (1.6 - gap) / 1.6) : 0;
-      c.drs = !race.safetyCar && gap < 1.0 && drsZones.some((z) => inZone(posOf(c), z)) && weather.wetness < 0.3;
+      c.drs = !race.safetyCar && gap < 1.0 && c.lap >= 2 && drsZones.some((z) => inZone(posOf(c), z)) && weather.wetness < 0.3;
 
       if (c.battleCooldown > 0) { c.battleCooldown -= dt; continue; }
-      if (race.safetyCar || gap > 0.9) continue;
+      // One move at a time. Without this a car already committed to a pass
+      // could open a second one every time it crossed a detection point, and
+      // the order turned over three times a lap.
+      if (c.duel || ahead.duel || c.defending) continue;
+      if (race.safetyCar || gap > 0.75) continue;
 
       // An attempt is only resolved at the end of a DRS zone or a big braking
       // zone; this is checked once per pass through that point, not per tick.
@@ -810,14 +968,14 @@ export function createWeekend(opts) {
       // field is bunched, nobody has clean air, and everyone is still on the
       // tyres and the fuel they started with.
       const firstLap = c.lap < 1;
-      const atCorner = firstLap && Math.abs(track.curv[trackAt(posOf(c))]) > 0.004;
+      const atCorner = firstLap && Math.abs(track.curv[trackAt(posOf(c))]) > 0.0075;
       const zone = drsZones.find((z) => inZone(posOf(c), z));
       if (!zone && !atCorner) { c._armed = true; continue; }
       if (!c._armed) continue;
       c._armed = false;
 
       const paceDelta = currentLapTime(ahead) - currentLapTime(c);   // + = attacker faster
-      const tyreDelta = (tyreGrip(c.tyre, c.wear, weather.wetness) - tyreGrip(ahead.tyre, ahead.wear, weather.wetness)) * 14;
+      const tyreDelta = (tyreGrip(c.tyre, c.wear, weather.wetness, c.tyreAge) - tyreGrip(ahead.tyre, ahead.wear, weather.wetness, ahead.tyreAge)) * 14;
       const drsBonus = c.drs ? 0.50 : 0;
       const attack = (c.driver.aggression ?? 0.75) * 0.8 + (c.driver.skill ?? 0.85) * 0.6;
       const defend = (ahead.driver.skill ?? 0.85) * 0.75 + (ahead.driver.consistency ?? 0.88) * 0.35
@@ -828,56 +986,47 @@ export function createWeekend(opts) {
       // stops meaning anything.
       if (paceDelta < -0.10 && !c.drs && !firstLap) { c.battleCooldown = 4; continue; }
 
-      const score = paceDelta * 1.05 + tyreDelta * 0.42 + drsBonus + (attack - defend) * 0.75 + (0.9 - gap) * 0.55
-        + (firstLap ? 0.26 : 0);
+      const score = paceDelta * 1.05 + tyreDelta * 0.42 + drsBonus + (attack - defend) * 0.75 + (0.75 - gap) * 0.55
+        + (firstLap ? 0.20 : 0);
       // Overtaking an evenly matched car is genuinely hard. The offset is what
       // makes track position worth something and a pit call a real decision.
-      const p = 1 / (1 + Math.exp(-score * 1.9)) - 0.45;
+      const p = 1 / (1 + Math.exp(-score * 1.9)) - 0.56;
 
-      // Which side he goes down: the inside of whatever is coming next.
-      const nextK = track.curv[trackAt(posOf(c) + 0.02)];
-      const side = Math.abs(nextK) > 0.002 ? (nextK > 0 ? -1 : 1) : (ahead.lateral > 0 ? -1 : 1);
+      // Where the move happens, and therefore how long it takes: the braking
+      // zone for the next corner. Inside for the corner if there is one, and
+      // whichever side the man in front is not on if there is not.
+      const apex = nextApex(posOf(c));
+      const side = apex ? -Math.sign(apex.k) : (ahead.lateral > 0 ? -1 : 1);
+      const inside = !!apex;
+      const v = Math.max(28, currentSpeed(c));
+      const reach = apex ? apex.metres : 200;
+      const dur = Math.max(1.6, Math.min(5.5, reach / v + 0.7));
+      const gapM = Math.max(3, (ahead.lap + posOf(ahead) - c.lap - posOf(c)) * track.length);
 
       if (rng.chance(Math.max(0, p))) {
         // A pass is not a swap of positions. He comes out of the tow, pulls
-        // alongside, and takes the place over the next few seconds — which is
-        // both what happens in a race and the only way it looks like one.
-        const dur = rng.range(2.6, 4.4);
-        const gapM = Math.max(4, (ahead.distance - c.distance));
+        // alongside on the brakes, and is in front by the exit — which is both
+        // what happens in a race and the only way it looks like one.
         c.duel = {
-          targetId: ahead.id, side, outcome: 'pass', t: 0, dur,
-          // Enough closing speed to complete the move inside `dur`, which is
-          // what a slipstream plus DRS plus a late brake is actually worth.
-          rate: (gapM + 13) / dur,
+          targetId: ahead.id, side, inside, outcome: 'pass', t: 0, dur,
+          total: gapM + 9, shape: 0, contact: false, reply: false,
           announced: false,
         };
         ahead.defending = -side;
+        ahead.defendEnv = 0;
         ahead.battleCooldown = 2;
       } else {
         // He has a look, gets alongside, and cannot make it stick.
-        const dur = rng.range(1.8, 3.0);
         c.duel = {
-          targetId: ahead.id, side, outcome: 'fail', t: 0, dur,
-          rate: Math.max(3, (ahead.distance - c.distance) * 0.55) / dur,
+          targetId: ahead.id, side, inside, outcome: 'fail', t: 0,
+          dur: Math.max(1.5, Math.min(3.6, dur * 0.8)),
+          total: gapM * 0.92, shape: 0, contact: false, reply: false,
           announced: false,
         };
         ahead.defending = -side;
+        ahead.defendEnv = 0;
         c.incidentTimer += rng.range(0.15, 0.55);
-        c.battleCooldown = 3;
-        // A failed lunge from an aggressive driver sometimes ends in contact.
-        const contactP = 0.012 + (c.driver.aggression ?? 0.75) * 0.022 + weather.wetness * 0.035;
-        if (rng.chance(contactP)) {
-          const hard = rng.chance(0.3);
-          c.damage = Math.min(1, c.damage + (hard ? 0.4 : 0.14));
-          ahead.damage = Math.min(1, ahead.damage + (hard ? 0.3 : 0.1));
-          c.incidentTimer += hard ? rng.range(8, 18) : rng.range(1.5, 4);
-          ahead.incidentTimer += hard ? rng.range(6, 15) : rng.range(1, 3);
-          c.penalty += hard ? 5 : 0;
-          say(`Contact! ${c.driver.name} into the back of ${ahead.driver.name}.${hard ? ' Both cars are damaged, and the stewards are looking at it.' : ''}`, {
-            kind: 'incident', car: c.id, player: c.isPlayer || ahead.isPlayer,
-          });
-          if (hard && rng.chance(0.4)) deploySafetyCar('vsc', 'debris on the racing line');
-        }
+        c.battleCooldown = 7;
       }
     }
   }
@@ -996,6 +1145,39 @@ export function createWeekend(opts) {
       return { ok: true, complied: false };
     }
     return { ok: false };
+  };
+
+  /**
+   * Team orders. You can ask the car in front to let his team mate past. He may
+   * well tell you where to go, and he will remember that you asked.
+   */
+  race.swapCars = (frontId, behindId) => {
+    const front = race.cars.find((x) => x.id === frontId);
+    const behind = race.cars.find((x) => x.id === behindId);
+    if (!front || !behind || front.status !== 'running' || behind.status !== 'running') return { ok: false };
+    front.overrideUntilLap = front.lap + 3;
+    const ctx = pitContext(front);
+    const willing = complianceChance(front.driver, 'hold', ctx) * 0.72
+      - (front.driver.aggression ?? 0.75) * 0.22;
+    if (front.defiance > 0 || !rng.chance(Math.max(0.05, willing))) {
+      front.defiance = rng.range(3, 6);
+      front.driver.morale = Math.max(0.15, (front.driver.morale ?? 0.65) - 0.05);
+      say(`${front.driver.name}: "${rng.pick(['Negative. I am not moving over.', 'No. Tell him to catch me first.', 'You are joking. I am racing him.'])}"`,
+        { kind: 'refusal', car: front.id, player: true });
+      return { ok: true, complied: false };
+    }
+    say(`${front.driver.name} is told to let ${behind.driver.name} through, and he does it cleanly.`,
+      { kind: 'order', car: front.id, player: true });
+    front.duel = null; behind.duel = null;
+    front.defending = 0; front.defendEnv = 0;
+    // He lifts: a couple of car lengths, given away over a few seconds.
+    front._launch = -11;
+    front._gridSide = behind.lateral >= 0 ? -1 : 1;
+    behind._launch = 11;
+    behind._gridSide = -front._gridSide;
+    front.driver.morale = Math.max(0.15, (front.driver.morale ?? 0.65) - 0.03);
+    front.battleCooldown = 8; behind.battleCooldown = 8;
+    return { ok: true, complied: true };
   };
 
   function orderText(c, mode) {
@@ -1137,6 +1319,8 @@ export function createWeekend(opts) {
       }, abrasion) * dLap;
       c.tyreAge += dLap;
       rollMistake(c, dLap);
+      rollChatter(c, dLap);
+      rollTrackLimits(c, dLap);
       rollFailure(c, dLap);
       if (c.status !== 'running') continue;
 
@@ -1177,20 +1361,59 @@ export function createWeekend(opts) {
       if (c.duel) {
         c.duel.t += dt;
         const phase = Math.min(1, c.duel.t / c.duel.dur);
-        const shape = c.duel.outcome === 'pass'
-          ? Math.sin(Math.PI * 0.5 * Math.min(1, phase * 1.15))   // push, then hold
-          : Math.sin(Math.PI * phase);                             // out, and back
-        c.u += (c.duel.rate * shape * dt) / track.length;
+        const target0 = race.cars.find((x) => x.id === c.duel.targetId);
+
+        // The whole move is a distance to be made up, spent along a curve that
+        // is slow out of the corner behind, quick on the brakes, and settled by
+        // the exit. Spending it by a fixed rate per second, which is what this
+        // used to do, is why a pass looked like a car being dragged past.
+        const sh = duelShape(c.duel, phase);
+        const step = (c.duel.total ?? 0) * (sh - (c.duel.shape ?? 0));
+        c.duel.shape = sh;
+        if (step) c.u = phaseOf(c, posOf(c) + step / track.length);
+
+        // The man in front covers, and eases back as it resolves.
+        if (target0 && target0.status === 'running') {
+          target0.defending = -c.duel.side;
+          target0.defendEnv = duelEnvelope(c.duel, phase);
+        }
+
+        // Alongside at the apex is where it goes wrong, if it is going to.
+        if (!c.duel.contact && phase > 0.42 && phase < 0.62 && target0) {
+          c.duel.contact = true;
+          const wild = (1 - (c.driver.consistency ?? 0.88)) * (c.driver.aggression ?? 0.75)
+            + (1 - (target0.driver.consistency ?? 0.88)) * 0.6;
+          if (rng.chance(wild * (0.035 + weather.wetness * 0.16))) {
+            contact(c, target0);
+            c.duel = null;
+            continue;
+          }
+        }
+
         if (c.duel.t >= c.duel.dur) {
-          const target = race.cars.find((x) => x.id === c.duel.targetId);
+          const target = target0;
           if (c.duel.outcome === 'pass' && target) {
-            say(`${c.driver.name} goes around the outside of ${target.driver.name} and takes the place.`.replace('around the outside of', c.duel.side > 0 ? 'down the inside of' : 'around the outside of'), {
+            say(`${c.driver.name} ${c.duel.inside ? 'goes down the inside of' : 'goes around the outside of'} ${target.driver.name} and takes the place.`, {
               kind: 'overtake', car: c.id, player: c.isPlayer || target.isPlayer,
             });
-            target.defending = 0;
-            c.battleCooldown = 6; target.battleCooldown = 4;
+            target.defending = 0; target.defendEnv = 0;
+            c.battleCooldown = 9; target.battleCooldown = 5;
+            // The switchback: better exit, better drive, and he has it back
+            // before the next corner. It is the best thing in racing.
+            const grit = (target.driver.skill ?? 0.85) * (target.driver.aggression ?? 0.75);
+            if (!c.duel.reply && rng.chance(0.06 + grit * 0.12)) {
+              target.duel = {
+                targetId: c.id, side: -c.duel.side, inside: !c.duel.inside, outcome: 'pass',
+                t: 0, dur: rng.range(1.5, 2.3), total: 13, shape: 0, reply: true, contact: false,
+              };
+              target.battleCooldown = 0;
+            }
           } else if (target) {
-            target.defending = 0;
+            if (rng.chance(0.35)) {
+              say(`${c.driver.name} has a look at ${target.driver.name} and cannot make it stick.`,
+                { kind: 'battle', car: c.id, player: c.isPlayer || target.isPlayer, priority: 'low' });
+            }
+            target.defending = 0; target.defendEnv = 0;
           }
           c.duel = null;
         }
@@ -1254,6 +1477,25 @@ export function createWeekend(opts) {
     }
 
     enforceSpacing();
+
+    // Under the safety car the field closes up. Without this a race neutralised
+    // on lap 8 stayed exactly as spread out as it was, which is the one thing
+    // a safety car never does.
+    if (race.safetyCar && race.safetyCar.kind === 'sc') {
+      const run = race.cars.filter((x) => x.status === 'running');
+      run.sort((a, b) => b.distance - a.distance);
+      for (let i = 1; i < run.length; i++) {
+        const ahead = run[i - 1], c = run[i];
+        const want = 22 + (i % 2) * 3;                 // metres, nose to nose
+        const trueGap = (ahead.lap + posOf(ahead) - c.lap - posOf(c)) * track.length;
+        if (trueGap <= want || trueGap > 900) continue;
+        const pull = Math.min(trueGap - want, 26 * dt);
+        const np = posOf(c) + pull / track.length;
+        if (np >= 1) { c.lap++; c.u = phaseOf(c, np - 1); }
+        else c.u = phaseOf(c, np);
+        c.distance = c.lap * track.length + c.u * track.length;
+      }
+    }
 
     // Leader lap counter drives weather and the safety car.
     const order = updateOrder();

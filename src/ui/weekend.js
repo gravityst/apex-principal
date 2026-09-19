@@ -248,7 +248,19 @@ function renderResult(app, root, race, round) {
 
   const mine = results.filter((r) => r.team.id === state.playerTeamId);
 
-  mount(root, h('div', { class: 'grid g-side' },
+  const winner = results.find((r) => r.position === 1);
+  const best = mine.filter((r) => r.position).sort((a, b) => a.position - b.position)[0];
+  const flourish = h('div', { class: `finish ${best && best.position <= 3 ? 'podium' : ''}` },
+    h('div', { class: 'chk' }),
+    h('div', { class: 'ft' },
+      h('div', { class: 'k' }, 'Chequered flag'),
+      h('h2', {}, winner ? `${winner.driver.name} wins the ${round.name}` : `${round.name}`),
+      h('p', { class: 'muted' }, best
+        ? `${best.driver.name} brings it home ${best.position === 1 ? 'in front' : `P${best.position}`}`
+          + `${best.gained > 0 ? `, up ${best.gained} from the grid` : best.gained < 0 ? `, down ${-best.gained} from the grid` : ''}.`
+        : 'Neither of your cars saw the flag.')));
+
+  mount(root, h('div', { class: 'grid' }, flourish, h('div', { class: 'grid g-side' },
     panel(`${round.name} — result`, round.venue,
       h('table', {},
         h('thead', {}, h('tr', {}, h('th', { class: 'r' }, '#'), h('th', {}, 'Driver'), h('th', {}, 'Team'),
@@ -289,5 +301,5 @@ function renderResult(app, root, race, round) {
             app.phase = 'practice';
             app.goto(seasonComplete(state) ? 'hub' : 'factory');
           },
-        }, seasonComplete(state) ? 'To the end of the season →' : 'On to the next round →')))));
+        }, seasonComplete(state) ? 'To the end of the season →' : 'On to the next round →'))))));
 }

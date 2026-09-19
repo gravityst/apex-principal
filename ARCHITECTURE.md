@@ -131,6 +131,18 @@ A phone in portrait is the hard case, and it is handled by taking things away ra
 
 `raceengine.js` advances a car by `dt / lapTime`, which is a fraction of the lap's **time**. `phaseMap()` in `laptime.js` inverts the solved speed profile once and maps that onto a fraction of the lap's **length**, and everything the circuit's geometry owns goes through it: where the car is drawn, the DRS zones, the pit entry, the sector lines. Without it a car covers a hairpin at the same metres per second as the main straight, which is what made the cars look like they were on rails. One map serves the whole field — built per car, the profiles disagree by a tenth of a percent, and a tenth of a percent of a lap is six metres.
 
+### Drawing twenty cars
+
+`applyDetail()` in `scene.js` runs once a frame: it sorts the field by distance from the camera, gives the near ones LOD 0, the middle ones LOD 1 and the rest LOD 2, hides anything past the far cut, and on a machine below the `high` tier draws only the nearest handful plus the player's two — with hysteresis, or the cars on the boundary blink. Shadow casting is a budget of four, because a shadow map is a second pass over every caster; everything else gets an instanced contact-shadow ellipse, twenty of them in one draw call. `adapt()` watches an exponential average of the frame time and takes away shadows, then resolution, when it cannot hold one.
+
+Braking and throttle are not simulated, but they are implied: the rate of change of the solved speed the car is doing is the pedal, and that is what lights the brake discs, throws the lock-up smoke and squashes the contact shadow.
+
+### An overtake
+
+`updateBattles()` decides whether one happens; `nextApex()` decides where. The move carries a total distance to be made up and spends it along `duelShape()` — a smootherstep, so it is slow out of the corner behind, quick on the brakes and settled by the exit. Spending it at a fixed rate per second, which is what it used to do, is why a pass looked like a car being dragged past. The defender is not a bystander: `defendEnv` moves him across to cover and eases him back. Contact is rolled once, at the apex. A completed pass can draw a switchback.
+
+One move at a time, per car: without that gate a car already committed to a pass opened another every time it crossed a detection point, and the order turned over three times a lap.
+
 ## Where the design decisions live
 
 - **No favouritism** — `rivals.js`. The file header states the rule; the code holds to it.

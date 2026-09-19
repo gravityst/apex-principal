@@ -58,6 +58,8 @@ Zoom on a scroll wheel or a pinch. Follow either driver, follow the leader, or p
 
 The simulation advances in quarter-second steps, but the renderer interpolates *between* them, so the cars move at constant velocity on screen rather than teleporting fourteen metres at a time. Measured over 1,500 frames, the frame-to-frame change in a car's speed has a median of 0.00% and a 99th percentile of 0.05%.
 
+An overtake is aimed at a corner. When a move starts, the engine finds the next braking zone, works out how long it takes to get there, and spends the whole distance along a curve that is slow out of the corner behind, quick on the brakes and settled by the exit. The man in front moves across to cover and eases back as it resolves. Sometimes they touch. Sometimes he gets it back on the exit, which is the best thing in racing.
+
 Overtakes happen the same way. A move is a manoeuvre with a side, a closing rate and two to four seconds to complete it, so the cars go wheel to wheel and the place changes while both are moving. When it does not come off, he draws alongside and has to concede. And when somebody locks a wheel, runs through the gravel or spins it, you see the smoke.
 
 ## Two cars, one of you
@@ -122,6 +124,10 @@ What keeps a championship close over the years is not rubber-banding. It is the 
 - the regulations periodically throw part of the work away.
 
 Measured over 24 simulated races, grid position predicts finishing position with r ≈ 0.82, pole converts to a win about half the time, and there are roughly 2 retirements and 0.4 accidents a race — numbers that sit where a real championship sits.
+
+## What the race costs to draw
+
+Twenty cars at full detail is about six hundred draw calls a frame and no phone will hold that, so detail is spent where it can be seen. Cars near the camera get the real model; the ones down the road get the cheap one; a quarter of a mile away they are not drawn at all, and on a small machine only the cars actually in the fight are drawn while the timing tower speaks for the rest. Four cars cast a real shadow and every car gets an instanced contact shadow, which is one draw call for all twenty. If the frame still slips, the renderer takes something away — shadows first, then resolution — and puts it back when it can. Draw calls came down from 270–470 to 70–190.
 
 ## On a phone
 

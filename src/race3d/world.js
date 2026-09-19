@@ -189,7 +189,9 @@ export function buildWorld(track, opts) {
   // ---- barriers, with advertising hoardings -------------------------------
   // A wall on each side gives the track an edge. Without one the asphalt just
   // dissolves into grass and there is no sense of a corridor.
-  const HOARDING = [0xd8232f, 0xf2f5f8, 0x1f6fd0, 0xf5c518, 0x0f8f6d];
+  const HOARDING = quality.tier === 'low'
+    ? [0xd8232f, 0x1f6fd0]
+    : [0xd8232f, 0xf2f5f8, 0x1f6fd0, 0xf5c518, 0x0f8f6d];
   for (const sign of [-1, 1]) {
     const per = 6;                                   // samples per hoarding panel
     const groups = new Map();                        // colour -> geometry chunks
@@ -420,19 +422,22 @@ export function createPuffs(scene, max = 90) {
 
   return {
     mesh,
-    /** @param kind 'smoke' | 'dust' */
+    /** @param kind 'smoke' | 'dust' | 'spray' */
     emit(x, y, z, kind = 'smoke', count = 3) {
       for (let k = 0; k < count; k++) {
         const p = live[cursor];
         p.t = 0;
-        p.life = kind === 'smoke' ? 1.1 + Math.random() * 0.7 : 0.8 + Math.random() * 0.5;
+        p.life = kind === 'smoke' ? 1.1 + Math.random() * 0.7
+          : kind === 'spray' ? 0.5 + Math.random() * 0.35
+            : 0.8 + Math.random() * 0.5;
         p.x = x + (Math.random() - 0.5) * 2.4;
         p.y = y + 0.2;
         p.z = z + (Math.random() - 0.5) * 2.4;
-        p.vy = 1.4 + Math.random() * 1.6;
-        p.size = kind === 'smoke' ? 1.6 : 1.1;
-        p.grow = kind === 'smoke' ? 5.5 : 3.4;
-        const c = kind === 'smoke' ? [0.82, 0.82, 0.84] : [0.62, 0.55, 0.40];
+        p.vy = kind === 'spray' ? 2.6 + Math.random() * 2.2 : 1.4 + Math.random() * 1.6;
+        p.size = kind === 'smoke' ? 1.6 : kind === 'spray' ? 0.9 : 1.1;
+        p.grow = kind === 'smoke' ? 5.5 : kind === 'spray' ? 7.5 : 3.4;
+        const c = kind === 'smoke' ? [0.82, 0.82, 0.84]
+          : kind === 'spray' ? [0.78, 0.84, 0.92] : [0.62, 0.55, 0.40];
         mesh.instanceColor.setXYZ(cursor, c[0], c[1], c[2]);
         cursor = (cursor + 1) % max;
       }
