@@ -746,10 +746,10 @@ export function createWeekend(opts) {
       // across at the start of the run looks decisive and throws away the one
       // thing that was going to get him there.
       const d = c.duel;
-      const pullAt = (d.apexAt || 1) * 0.55;
+      const pullAt = (d.apexAt || 1) * 0.34;
       const env = d.stage === 'backout'
         ? Math.max(0, 1 - (d.t - d.apexAt) / 1.2)
-        : Math.max(0, Math.min(1, (d.t - pullAt) / Math.max(0.45, (d.apexAt || 1) * 0.35)));
+        : Math.max(0, Math.min(1, (d.t - pullAt) / Math.max(0.40, (d.apexAt || 1) * 0.30)));
       target = racingLine(p) + d.side * Math.min(w * 0.62, 3.2) * env;
     } else if (c._launch) {
       target = (c._gridSide || 1) * Math.min(w * 0.44, 2.6);
@@ -794,25 +794,92 @@ export function createWeekend(opts) {
    * grid line up in staggered rows eight metres apart, and what lets a move
    * happen at all.
    */
+  /**
+   * Two cars may not occupy the same piece of road. Ever — including while one
+   * of them is in the middle of a move, which is when it used to happen: this
+   * skipped any car with a duel open, and a duel spends its first seconds in
+   * the tow, on the same line, closing. The attacker drove straight into the
+   * back of the man in front and the two models sat inside each other.
+   *
+   * So the rule is unconditional and the lateral position is what relaxes it.
+   * Nose to tail on one line: a car's length and a bit. Fully alongside: a
+   * couple of metres. Everything between is graded, because half a car's width
+   * of overlap is exactly where two cars end up in the same place.
+   *
+   * The consequence is the right one. A car in the tow cannot close the last
+   * six metres, however quick it is, until it moves across — which is what
+   * pulling out of a slipstream is FOR.
+   */
+  /**
+   * The last word on it: after everything else has moved, no two cars are in
+   * the same place. Longitudinal spacing alone does not do it — two cars that
+   * are legally side by side and then both drift back to the racing line end
+   * up occupying the same road without either of them moving forwards.
+   *
+   * So they are pushed apart ACROSS the circuit, which is what a driver does
+   * and what costs nothing in lap time, and only if the road runs out is the
+   * one behind backed off instead.
+   */
+  const MIN_SIDE = 2.5;                      // metres between two cars abreast
+  function separate() {
+    for (let pass = 0; pass < 4; pass++) {
+      const list = race.cars.filter((c) => c.status === 'running');
+      list.sort((a, b) => b.distance - a.distance);
+      for (let i = 1; i < list.length; i++) {
+        // Against the next two, not just the one in front: three cars abreast
+        // means the outer pair are not adjacent in the order and were never
+        // compared.
+        for (let k = 1; k <= 2 && i - k >= 0; k++) {
+          const A = list[i - k], B = list[i];
+          // Absolute, because two cars that are level can come out either way
+          // round — and level is exactly the case that matters.
+          const dx = Math.abs((A.lap + posOf(A) - B.lap - posOf(B)) * track.length);
+          if (dx > 6.2) continue;
+          const dy = (A.lateral ?? 0) - (B.lateral ?? 0);
+          if (Math.abs(dy) >= MIN_SIDE) continue;
+          const w = track.width[trackAt(posOf(A))] - 1.0;
+          // Capped, so the move across is something a car could do rather than
+          // a sideways teleport. The renderer draws it as a real change of line.
+          const push = Math.min(0.7, (MIN_SIDE - Math.abs(dy)) / 2 + 0.06);
+          const dir = dy >= 0 ? 1 : -1;
+          A.lateral = Math.max(-w, Math.min(w, (A.lateral ?? 0) + dir * push));
+          B.lateral = Math.max(-w, Math.min(w, (B.lateral ?? 0) - dir * push));
+          // No room across the road: he has to lift instead.
+          if (Math.abs(A.lateral - B.lateral) < MIN_SIDE - 0.1) nudge(B, -(7.2 - dx));
+        }
+      }
+    }
+  }
+
+  /** How close these two may be, given how far apart they are across the road. */
+  function clearanceFor(a, b) {
+    const lat = Math.abs((a.lateral ?? 0) - (b.lateral ?? 0));
+    return lat >= 2.4 ? 2.0 : 7.2 - (lat / 2.4) * 5.2;
+  }
+
   function enforceSpacing() {
-    const list = race.cars.filter((c) => c.status === 'running');
-    list.sort((a, b) => b.distance - a.distance);
-    for (let i = 1; i < list.length; i++) {
-      const ahead = list[i - 1], c = list[i];
-      if (c.duel || ahead.duel) continue;                 // alongside, or going by
-      const pa = ahead.lap + posOf(ahead);
-      const pc = c.lap + posOf(c);
-      const gap = (pa - pc) * track.length;
-      if (gap > 12 || gap < 0) continue;
-      // How close he may get depends on how far across he is. Fully alongside,
-      // a couple of metres; on the same line, a car's length and a bit. Graded,
-      // because half a car's width of overlap is exactly where two cars end up
-      // occupying the same piece of road.
-      const lat = Math.abs((ahead.lateral ?? 0) - (c.lateral ?? 0));
-      const need = lat >= 2.2 ? 1.9 : 6.6 - (lat / 2.2) * 4.7;
-      if (gap >= need) continue;
-      // Hold him back, but never push him across the timing line backwards.
-      nudge(c, -(need - gap));
+    // Three passes, re-sorted each time. One pass is not enough: pushing a car
+    // back can put it behind the next one down, and the pair that then overlaps
+    // was never compared, because the order it was compared in is now stale.
+    for (let pass = 0; pass < 3; pass++) {
+      const list = race.cars.filter((c) => c.status === 'running');
+      list.sort((a, b) => b.distance - a.distance);
+      let moved = false;
+      for (let i = 1; i < list.length; i++) {
+        const ahead = list[i - 1], c = list[i];
+        // A negative gap here means they are level and the two orderings
+        // disagree by a few centimetres. Level is the case that matters, so it
+        // is treated as zero rather than skipped.
+        const gap = Math.max(0, (ahead.lap + posOf(ahead) - c.lap - posOf(c)) * track.length);
+        if (gap > 14) continue;
+        const need = clearanceFor(ahead, c);
+        if (gap >= need) continue;
+        const before = c.u;
+        // Hold him back, but never push him across the timing line backwards.
+        nudge(c, -(need - gap));
+        if (c.u !== before) moved = true;
+      }
+      if (!moved) break;
     }
   }
 
@@ -1195,7 +1262,7 @@ export function createWeekend(opts) {
       inside: takesInside,
       // How much overlap he needs at turn-in to be given the corner. Down the
       // inside, a front wheel alongside is enough. Round the outside it is not.
-      needed: takesInside ? 0.45 : 0.76,
+      needed: takesInside ? 0.62 : 0.88,
       stage: 'run',
       t: 0,
       apexAt,
@@ -1235,17 +1302,22 @@ export function createWeekend(opts) {
     if (d.stage === 'run' || d.stage === 'alongside' || d.stage === 'switchback') {
       // What he is actually worth, in metres a second.
       const paceAdv = Math.max(-0.6, currentLapTime(ahead) - currentLapTime(c)) * 0.9;
-      const tow = alongside ? 0 : (c.tow ?? 0) * 5.5;              // gone once he is out of the wake
-      const drs = c.drs ? 7.0 * straightness(posOf(c)) : 0;
+      const tow = alongside ? 0 : (c.tow ?? 0) * 4.5;              // gone once he is out of the wake
+      const drs = c.drs ? 5.5 * straightness(posOf(c)) : 0;
       const grit = ((c.driver.aggression ?? 0.75) - 0.5) * 2.2;
       const held = ((ahead.driver.skill ?? 0.85) - 0.8) * 3.0 + (ahead.mode === 'hold' ? 1.4 : 0);
-      let closing = paceAdv * 9.0 + tow + drs + grit - held;
+      let closing = paceAdv * 6.0 + tow + drs + grit - held;
       if (d.stage === 'switchback') closing += 5.5;                 // better exit, better drive
       // Once he is level there is nothing left to gain from the tow, so the
       // last half a car length is the hardest. That is the whole feel of it.
       closing *= 1 - d.overlap * 0.40;
       closing = Math.max(-4, Math.min(16, closing));
-      nudge(c, closing * dt);
+      // He cannot close the last few metres on the same line, however quick he
+      // is: there is a car there. Clamping the move rather than correcting it
+      // afterwards is also what stops the pass looking like a lurch.
+      let move = closing * dt;
+      if (move > 0) move = Math.min(move, Math.max(0, gap - clearanceFor(ahead, c)));
+      nudge(c, move);
 
       if (d.overlap > 0.22) d.stage = d.stage === 'switchback' ? 'switchback' : 'alongside';
     }
@@ -1292,7 +1364,7 @@ export function createWeekend(opts) {
           d.stage = 'switchback';
           d.side = -d.side;
           d.inside = !d.inside;
-          d.needed = d.inside ? 0.5 : 0.8;
+          d.needed = d.inside ? 0.62 : 0.88;
           d.decided = null;
           d.contact = false;
           d.reply = true;
@@ -1310,11 +1382,19 @@ export function createWeekend(opts) {
     const d = c.duel;
     if (!d) return;
     const ahead = race.cars.find((x) => x.id === d.targetId);
-    if (ahead) { ahead.defending = 0; ahead.defendEnv = 0; ahead.battleCooldown = passed ? 4 : 2.5; }
-    c.battleCooldown = passed ? 7 : 5.5;
+    if (ahead) { ahead.defending = 0; ahead.defendEnv = 0; ahead.battleCooldown = passed ? 10 : 8; }
+    // A pair does not re-litigate the same corner every lap. After a move, both
+    // of them settle for a while — which is what lets a gap form and a race
+    // have a shape instead of a permanent scrap.
+    c.battleCooldown = passed ? 16 : 11;
     if (passed && ahead) {
-      say(`${c.driver.name} ${d.inside ? 'goes down the inside of' : 'holds it round the outside of'} ${ahead.driver.name} and takes the place.`,
-        { kind: 'overtake', car: c.id, player: c.isPlayer || ahead.isPlayer });
+      // Putting a lapped car behind you is not an overtake and nobody reports
+      // it as one; it is traffic.
+      const lapping = c.lap !== ahead.lap;
+      say(lapping
+        ? `${c.driver.name} clears ${ahead.driver.name} and is through the traffic.`
+        : `${c.driver.name} ${d.inside ? 'goes down the inside of' : 'holds it round the outside of'} ${ahead.driver.name} and takes the place.`,
+        { kind: lapping ? 'battle' : 'overtake', car: c.id, player: c.isPlayer || ahead.isPlayer });
       radioPassed(c, ahead);
       // The switchback the other way: a better exit and he has it straight back.
       const grit = (ahead.driver.skill ?? 0.85) * (ahead.driver.aggression ?? 0.75);
@@ -1345,8 +1425,11 @@ export function createWeekend(opts) {
       // have a go at anything. Both are attempts — only one of them works.
       const gap = c.interval;
       const metres = gapMetres(ahead, c);
-      if (metres > 75 || metres < 0) continue;
-      if (gap > 1.05) continue;
+      // With the flap he can attack from the far end of a straight. Without it
+      // he has to be on the man's gearbox, which is what being unable to follow
+      // closely actually means.
+      if (metres < 0 || metres > (c.drs ? 75 : 42)) continue;
+      if (gap > (c.drs ? 1.05 : 0.8)) continue;
 
       // Opportunities are the braking zones. Every corner counts on lap one,
       // because on lap one it does.
@@ -1374,8 +1457,11 @@ export function createWeekend(opts) {
         - tyreGrip(ahead.tyre, ahead.wear, weather.wetness, ahead.tyreAge);
       const worth = paceDelta * 1.6 + tyreDelta * 9 + (c.drs ? 0.55 : 0) + (c.tow ?? 0) * 0.35
         + ((c.driver.aggression ?? 0.75) - 0.7) * 0.9 + (firstLap ? 0.45 : 0);
-      if (worth < 0.04) { c.battleCooldown = 3; continue; }
-      if (!rng.chance(Math.min(0.92, 0.28 + worth * 0.5))) { c.battleCooldown = 2.5; continue; }
+      // Proximity is not a reason. He needs pace in hand, a better tyre, the
+      // flap or a tow — otherwise he sits there, which is a DRS train.
+      const hasReason = paceDelta > 0.04 || tyreDelta > 0.006 || c.drs || (c.tow ?? 0) > 0.55 || firstLap;
+      if (!hasReason || worth < 0.16) { c.battleCooldown = 4; continue; }
+      if (!rng.chance(Math.min(0.88, 0.16 + worth * 0.40))) { c.battleCooldown = 3; continue; }
 
       startMove(c, ahead, apex);
     }
@@ -1861,6 +1947,10 @@ export function createWeekend(opts) {
         if (c.status === 'running' || c.status === 'pit') { c.status = 'finished'; c.raceTime = race.time + 1; }
       }
     }
+    // The very last thing, after every other hand has been on the positions:
+    // no two cars in the same piece of road.
+    separate();
+
     if (race.cars.every((c) => c.status === 'retired' || c.status === 'finished')) finish();
   };
 

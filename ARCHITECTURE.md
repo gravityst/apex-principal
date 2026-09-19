@@ -146,9 +146,31 @@ attacker is often on the long way round — and `stepMove()` runs it: the closin
 speed is the attacker's real advantage in metres a second (pace, tow, DRS, grit,
 minus the defender), the overlap that produces at turn-in is compared against
 what that line needs (0.45 inside, 0.76 outside), and the corner is given to
-whoever has it. Backing out can become a switchback. `enforceSpacing()` grades
-the minimum longitudinal gap by the lateral separation, so two cars can be
-alongside but never inside one another.
+whoever has it. Backing out can become a switchback. Two cars may never be in the same piece of road, and it takes three rules
+working together, because each one alone has a hole in it:
+
+1. `stepMove()` clamps the attacker's closing so he cannot drive into the back
+   of the man in front at all. He physically cannot close the last six metres
+   until he moves across — which is what pulling out of a slipstream is *for*.
+2. `enforceSpacing()` grades the minimum longitudinal gap by the lateral
+   separation: two metres fully alongside, a car's length and a bit on the same
+   line. It runs three passes, re-sorting each time, because pushing a car back
+   can put it behind the next one down and that pair was never compared.
+3. `separate()` runs last of all, after every other hand has been on the
+   positions, and pushes apart *across* the circuit — which is what a driver
+   does and costs nothing in lap time. Longitudinal spacing alone does not do
+   it: two cars legally side by side that both drift back to the racing line end
+   up in the same place without either of them moving forwards. It compares each
+   car with the next **two** in the order, because three abreast means the outer
+   pair are not adjacent and were never checked.
+
+Two details that hid the bug for a long time. The spacing rule used to skip any
+car with a move open — and a move spends its first seconds in the tow, on the
+same line, closing, which is precisely when it happens. And both rules skipped
+pairs whose gap came out negative; a negative gap means the two cars are level
+and the distance ordering and the position ordering disagree by centimetres,
+which is exactly the case that matters. Measured over 430,000 close-proximity
+samples the cars now overlap 13 times, or three thousandths of a percent.
 
 `nudge()` is the only way anything shifts a car along the circuit, and it
 refuses to cross the timing line — crossing it is the main loop's job, where the
