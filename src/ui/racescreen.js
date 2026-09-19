@@ -46,6 +46,9 @@ const SPEAKER_LABEL = {
 
 const short = (d) => d.short || d.name.split(' ').pop();
 
+/** What the engineer's tone amounts to, in one word you can read at speed. */
+const URGENCY_WORD = { high: 'DECIDE NOW', act: 'ACT', none: 'HOLD' };
+
 export function renderRaceScreen(app, root, race, round) {
   const track = getTrack(round.circuit);
   const mine = race.cars.filter((c) => c.isPlayer);
@@ -541,26 +544,58 @@ export function renderRaceScreen(app, root, race, round) {
       if (!el) {
         el = h('div', { class: 't2row' },
           h('span', { class: 'p' }), h('i', {}), h('span', { class: 'nm' }),
-          h('span', { class: 'mv' }), h('span', { class: 'gp' }), h('span', { class: 'ty' }));
+          h('span', { class: 'mv' }),
+          // The gap, and a bar the length of it. A column of numbers tells you
+          // the order; a column of bars tells you the shape of the race — who
+          // is in a train, who is alone, where the race is actually happening.
+          h('span', { class: 'gpw' }, h('span', { class: 'gp' }), h('i', { class: 'gb' })),
+          h('span', { class: 'ty' }, h('b', {}), h('span', { class: 'age' })));
         el.children[1].style.background = c.team.colors.primary;
+        el.style.setProperty('--row-team', c.team.colors.primary);
         towerPool.set(key, el);
       }
       seen.add(key);
       const cls = c.status === 'retired' ? 'out' : c.status === 'pit' ? 'inpit' : '';
-      el.className = `t2row ${c.isPlayer ? 'me' : ''} ${cls}`;
+      el.className = `t2row ${c.isPlayer ? "me" : ""} ${c.id === followId ? "focus" : ""} ${cls}`;
       el.children[0].textContent = c.status === 'retired' ? '–' : c.position;
       el.children[2].textContent = short(c.driver);
       const moved = (c.gridPos || c.position) - c.position;
       el.children[3].textContent = c.status === 'retired' ? '' : moved > 0 ? `▲${moved}` : moved < 0 ? `▼${-moved}` : '';
       el.children[3].className = `mv ${moved > 0 ? 'up' : moved < 0 ? 'down' : ''}`;
-      el.children[4].textContent = c.status === 'retired' ? 'DNF'
+
+      const gapEl = el.children[4].children[0], barEl = el.children[4].children[1];
+      gapEl.textContent = c.status === 'retired' ? 'DNF'
         : c.status === 'pit' ? 'PIT'
           : c.position === 1 ? 'LEADER' : gapTime(c.interval);
-      el.children[5].textContent = (TYRE_COMPOUNDS[c.tyre]?.short || '?') + Math.floor(c.tyreAge);
-      el.children[5].className = `ty ty-${c.tyre}`;
+      // Under a second is a fight, five seconds is out of reach. Everything
+      // interesting happens in that range, so that is the range the bar spends
+      // its width on.
+      const iv = c.status === 'running' && c.position > 1 ? (c.interval ?? 9) : null;
+      const frac = iv == null ? 0 : Math.max(0.06, Math.min(1, iv / 5));
+      barEl.style.width = iv == null ? '0%' : `${frac * 100}%`;
+      barEl.className = `gb ${iv != null && iv < 1 ? 'drs' : iv != null && iv < 2.2 ? 'near' : ''}`;
+
+      const ty = el.children[5];
+      ty.className = `ty ty-${c.tyre}`;
+      ty.children[0].textContent = TYRE_COMPOUNDS[c.tyre]?.short || '?';
+      ty.children[1].textContent = Math.floor(c.tyreAge);
       els.push(el);
     }
+
+    // Move rows by animating them from where they were, so a position change
+    // is something you see happen rather than something that has happened.
+    const before = new Map();
+    for (const el of els) if (el.isConnected) before.set(el, el.getBoundingClientRect().top);
     ovTower.replaceChildren(...els);
+    for (const el of els) {
+      const was = before.get(el);
+      if (was == null) continue;
+      const dy = was - el.getBoundingClientRect().top;
+      if (!dy || Math.abs(dy) < 0.5 || Math.abs(dy) > 400) continue;
+      el.animate(
+        [{ transform: `translateY(${dy}px)` }, { transform: 'none' }],
+        { duration: 220, easing: 'cubic-bezier(.2,.7,.3,1)' });
+    }
     for (const [k, el] of towerPool) if (!seen.has(k)) el.remove();
   }
 
@@ -576,9 +611,14 @@ export function renderRaceScreen(app, root, race, round) {
     if (!best) { ovCall.style.display = 'none'; return; }
     ovCall.style.display = '';
     ovCall.className = `callout pri-${best.b.urgency}`;
+    ovCall.style.setProperty('--call-team', best.car.team.colors.primary);
     ovCall.replaceChildren(
-      h('span', { class: 'who' }, short(best.car.driver)),
-      h('span', { class: 'what' }, best.b.call));
+      h('span', { class: 'who' },
+        h('b', {}, short(best.car.driver)),
+        h('span', { class: 'pos' }, `P${best.car.position}`)),
+      h('span', { class: 'what' },
+        h('span', { class: 'urg' }, URGENCY_WORD[best.b.urgency] || ''),
+        h('span', { class: 'txt' }, best.b.call)));
   }
 
   /**
@@ -1058,7 +1098,12 @@ function makeCarDeck(race, c, mine) {
 
 function makeStrategyPanel(race, c) {
   const posEl = h('span', { class: 'p' });
-  const callEl = h('div', { class: 'call' });
+  // The call is the one thing on this screen a principal has to read, so it
+  // says what kind of call it is before it says anything else.
+  const callUrg = h('span', { class: 'cu' });
+  const callTxt = h('p', { class: 'ct' });
+  const callEl = h('div', { class: 'call' },
+    h('div', { class: 'ch' }, h('span', { class: 'cw' }, 'ENGINEER'), callUrg), callTxt);
   const grid = h('div', { class: 'stratgrid' });
   const tyreBar = h('i', {});
   const tyreNote = h('div', { class: 'tnote' });
@@ -1084,7 +1129,8 @@ function makeStrategyPanel(race, c) {
     if (c.status === 'retired') {
       posEl.textContent = 'DNF';
       callEl.className = 'call pri-high';
-      callEl.textContent = `Out of the race — ${c.retireReason}.`;
+      callUrg.textContent = 'RETIRED';
+      callTxt.textContent = `Out of the race — ${c.retireReason}.`;
       grid.replaceChildren(); lapWrap.replaceChildren();
       tyreBar.style.width = '0%'; tyreNote.textContent = '';
       return;
@@ -1092,7 +1138,8 @@ function makeStrategyPanel(race, c) {
     const b = strategyBrief(race, c);
     posEl.textContent = `P${c.position}`;
     callEl.className = `call pri-${b.urgency}`;
-    callEl.textContent = b.call;
+    callUrg.textContent = URGENCY_WORD[b.urgency] || '';
+    callTxt.textContent = b.call;
 
     const life = Math.max(0, Math.min(1, 1 - b.tyre.wear));
     tyreBar.style.width = `${life * 100}%`;
@@ -1109,8 +1156,8 @@ function makeStrategyPanel(race, c) {
       cell('Undercut', b.undercut ? b.undercut.verdict.toUpperCase() : '—',
         b.undercut ? (b.undercut.verdict === 'on' ? 'good' : b.undercut.verdict === 'marginal' ? 'warn' : 'dim') : 'dim',
         b.undercut ? `${b.undercut.swing.toFixed(1)}s swing vs ${b.undercut.gapNow.toFixed(1)}s gap` : 'leading'),
-      cell('Fuel', `${b.fuel.margin >= 0 ? '+' : ''}${b.fuel.margin.toFixed(1)}`,
-        b.fuel.short ? 'bad' : 'good', `laps ${b.fuel.short ? 'short' : 'spare'}`),
+      cell('Fuel weight', `−${b.fuel.gainToEnd.toFixed(2)}s`, 'good',
+        `coming to him by the flag`),
       cell('Push', `+${b.push.gain.toFixed(2)}s`, 'good', `costs ${b.push.lifeCostPush.toFixed(1)} laps of tyre`),
       cell('Save', `−${b.push.save.toFixed(2)}s`, 'warn', `gains ${b.push.lifeGainSave.toFixed(1)} laps of tyre`),
       cell('Risk', pct(b.push.riskPush, 1), b.push.riskPush > 0.02 ? 'bad' : '', 'a mistake, per lap pushing'),

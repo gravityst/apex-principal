@@ -224,21 +224,31 @@ export function pushTrade(race, car) {
   };
 }
 
-/** Fuel: how many laps you can do, against how many are left. */
+/**
+ * Fuel, as weight rather than as a threat.
+ *
+ * Every car starts the race with more than it can possibly use, so "will he
+ * make it" is not a question the pit wall asks here. What is still worth
+ * knowing is what the fuel on board is doing to the lap time, and how much
+ * the car is going to find as it burns off — a stint that starts a second off
+ * and ends level is a stint that was always going to come to the driver.
+ */
 export function fuelOutlook(race, car) {
   const perLap = 0.335 * (race.track.length / 1000);
-  const lapsLeft = race.lapsTotal - car.lap;
+  const lapsLeft = Math.max(0, race.lapsTotal - car.lap);
   const modeMul = car.mode === 'push' ? 1.055 : car.mode === 'conserve' ? 0.935 : 1;
-  const lapsOfFuel = car.fuel / (perLap * modeMul);
-  const margin = lapsOfFuel - lapsLeft;
+  const burnPerLap = perLap * modeMul;
+  const kgAtEnd = Math.max(0, car.fuel - burnPerLap * lapsLeft);
+  const perKg = car.model && car.model.perKgFuel ? car.model.perKgFuel : 0.032;
   return {
     kg: car.fuel,
-    lapsOfFuel,
+    burnPerLap,
     lapsLeft,
-    margin,
-    short: margin < 0,
-    // How much lift-and-coast is needed to make it, in seconds a lap.
-    saveNeeded: margin < 0 ? Math.min(1.2, (-margin / Math.max(1, lapsLeft)) * 14) : 0,
+    kgAtEnd,
+    // What he is still carrying, in seconds a lap against an empty car.
+    costNow: car.fuel * perKg,
+    // What the car picks up between here and the flag, purely from weight.
+    gainToEnd: Math.max(0, (car.fuel - kgAtEnd) * perKg),
   };
 }
 
@@ -265,9 +275,6 @@ export function strategyBrief(race, car) {
   let call, urgency;
   if (lapsLeft <= 1) {
     call = 'Last lap. Bring it home.'; urgency = 'none';
-  } else if (fuel.short && fuel.saveNeeded > 0.3) {
-    call = `Fuel is short by ${Math.abs(fuel.margin).toFixed(1)} laps. He has to lift and coast — put him on conserve or he will not finish.`;
-    urgency = 'high';
   } else if (tyre.pastCliff) {
     call = `The tyre is gone — costing ${tyre.lossNow.toFixed(1)}s a lap. Box now; every lap out here is a lost place.`;
     urgency = 'high';
@@ -329,8 +336,10 @@ export function engineerCalls(race, car, memo) {
     out.push({ p: 'normal', text: `Pit window is open. Tyres good for about ${tyre.lapsUsable.toFixed(0)} more.` });
   }
 
-  if (fuel.short && fuel.saveNeeded > 0.25 && !said('fuel', 6)) {
-    out.push({ p: 'high', text: `Fuel is ${Math.abs(fuel.margin).toFixed(1)} laps short. We need lift and coast from here.` });
+  // Weight coming off the car is worth calling once, early, because it
+  // changes what a lap time means for the next twenty laps.
+  if (fuel.gainToEnd > 0.55 && lapsLeft > 12 && !said('fuelWeight', 99)) {
+    out.push({ p: 'normal', text: `Bear in mind he is heavy — there is ${fuel.gainToEnd.toFixed(1)} a lap coming to us as the fuel burns off.` });
   }
 
   const uc = undercut(race, car);

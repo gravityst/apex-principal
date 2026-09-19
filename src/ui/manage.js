@@ -57,25 +57,26 @@ export function renderFactory(app, root) {
         oninput: (e) => { weights[a.id] = Number(e.target.value) / 100; redraw(); },
       });
 
-      return h('div', {
-        style: {
-          padding: '11px 0', borderBottom: '1px solid rgba(26,37,54,.6)',
-          display: 'grid', gridTemplateColumns: 'minmax(0,1.25fr) minmax(0,1fr)', gap: '14px', alignItems: 'center',
-        },
-      },
-        h('div', {},
-          h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '8px' } },
-            h('b', { style: { fontSize: '13.5px' } }, a.name),
-            rank < 3 ? h('span', { class: 'tiny', style: { color: 'var(--accent-2)', fontWeight: '700' } }, ['BEST VALUE', '2ND', '3RD'][rank]) : null,
-            h('span', { class: 'mono dim', style: { marginLeft: 'auto', fontSize: '12px' } }, level.toFixed(1))),
+      // A card per department rather than a row in a table: where the money
+      // goes is eight separate decisions, and each one wants its own object
+      // with its own state. A department with money on it says so — it lights
+      // its edge and prints what the money is expected to buy.
+      const share = budget > 0 ? spendHere / budget : 0;
+      return h('div', { class: `rdcard${spendHere > 0.05 ? ' funded' : ''}${rank === 0 ? ' best' : ''}` },
+        h('div', { class: 'rd-a' },
+          h('div', { class: 'rd-hd' },
+            h('b', {}, a.name),
+            rank < 3 ? h('span', { class: `rdrank r${rank}` }, ['BEST VALUE', '2ND', '3RD'][rank]) : null,
+            h('span', { class: 'rd-lv mono' }, level.toFixed(1))),
           meter(level, 100, level >= 75 ? 'var(--purple)' : level >= 55 ? 'var(--accent-2)' : 'var(--warn)'),
-          h('div', { class: 'tiny dim', style: { marginTop: '5px' } }, a.blurb)),
-        h('div', {},
+          h('div', { class: 'rd-blurb' }, a.blurb)),
+        h('div', { class: 'rd-b' },
           slider,
-          h('div', { class: 'tiny', style: { display: 'flex', gap: '12px', color: 'var(--ink-3)' } },
-            h('span', {}, money(spendHere)),
-            h('span', { class: exp > 0 ? 'good' : '' }, `≈ +${exp.toFixed(1)} pts`),
-            h('span', {}, `${money(costPerPoint(level))}/pt`))));
+          h('div', { class: 'rd-nums' },
+            h('span', { class: 'rd-spend' }, money(spendHere)),
+            h('span', { class: `rd-pts${exp > 0 ? ' on' : ''}` }, `+${exp.toFixed(1)} pts`),
+            h('span', { class: 'rd-rate' }, `${money(costPerPoint(level))}/pt`)),
+          h('div', { class: 'rd-share' }, h('i', { style: { width: `${Math.round(share * 100)}%` } }))));
     }));
   }
   redraw();

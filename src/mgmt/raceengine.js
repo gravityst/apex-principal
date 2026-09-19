@@ -179,7 +179,14 @@ export function createWeekend(opts) {
       tyre: 'medium',
       tyreAge: 0,
       wear: 0,
-      fuel: fuelPerLap * totalLaps * 1.055,
+      // Fuelled for the distance, and then some. The race is never decided by
+      // an empty tank: even a car that pushes from lights to flag (1.055x the
+      // nominal burn) and spends laps behind a safety car burning fuel at
+      // racing rate cannot reach the end of this. Fuel still BURNS, because a
+      // car that sheds fifty kilos over a race and finds half a second a lap
+      // by the end is one of the things that makes a stint feel like a stint —
+      // it just cannot run out.
+      fuel: fuelPerLap * totalLaps * 1.14,
       mode: 'neutral',
       ersMode: 'balanced',
       orderedMode: null,
@@ -294,7 +301,6 @@ export function createWeekend(opts) {
       mode: c.mode,
       wet: weather.wetness,
       dirtyAir: c.dirtyAir,
-      fuelSave: c.fuelSave ?? 0,
     };
     const pace = driverPace(c.driver, ctx);
     let t = c.model.at(c.fuel, grip * (1 - c.damage * 0.22));
@@ -1006,8 +1012,8 @@ export function createWeekend(opts) {
       'Front left is done, I am asking a lot of it.', 'Graining at the front. It will not last.'],
     traffic: ['I am in his gearbox and I cannot get by.', 'Give me a plan, I am losing the front here.',
       'He is slow in the corners and quick on the straight. I need help.'],
-    fuel: ['How is the fuel? I do not want to be lifting at the end.',
-      'Tell me now if I have to save, not on the last lap.'],
+    brakes: ['Brakes are getting long on me into the heavy stops.',
+      'I am having to brake earlier than I want at the end of the straight.'],
     wet: ['It is getting greasy out here.', 'I have no idea where the grip is.',
       'Standing water at the back of the circuit. Be careful with the calls.'],
   };
@@ -1018,7 +1024,7 @@ export function createWeekend(opts) {
     if (weather.wetness > 0.25 && rng.chance(0.6)) bucket = 'wet';
     else if (c.wear > 0.72) bucket = 'tyres';
     else if (c.dirtyAir > 0.5) bucket = 'traffic';
-    else if ((c.fuel ?? 99) < fuelPerLap * (totalLaps - c.lap) * 1.02) bucket = 'fuel';
+    else if (c.mode === 'push' && c.lap > totalLaps * 0.4) bucket = 'brakes';
     else if (c.lastLapTime && c.bestLap && c.lastLapTime > c.bestLap + 1.2) return;
     say(`${c.driver.name}: "${rng.pick(DRIVER_LINES[bucket])}"`,
       { kind: 'chatter', from: 'driver', priority: 'low', car: c.id, player: true });
@@ -1647,14 +1653,15 @@ export function createWeekend(opts) {
     // it says what it is doing, so you can disagree in time.
     if (c.isPlayer && c.strategyMode === 'auto' && c.lap >= c.overrideUntilLap) {
       const lapsLeft = totalLaps - c.lap;
-      const fuelShort = c.fuel < lapsLeft * fuelPerLap * 1.01;
-      const want = fuelShort && lapsLeft > 2 ? 'conserve'
-        : c.wear > 0.88 && lapsLeft > 5 ? 'conserve'
-          : (lapsLeft < 8 || c.interval < 1.2) ? 'push' : 'neutral';
+      const want = c.wear > 0.88 && lapsLeft > 5 ? 'conserve'
+        : (lapsLeft < 8 || c.interval < 1.2) ? 'push' : 'neutral';
       if (want !== c.mode) {
         c.mode = want;
         c.orderedMode = want;
-        say(`${c.driver.short || c.driver.name.split(' ').pop()} going to ${want}${fuelShort ? ' — fuel is tight' : c.wear > 0.88 ? ' — tyres are going' : ''}.`,
+        const why = c.wear > 0.88 ? ' — tyres are going'
+          : c.interval < 1.2 ? ' — he has a run on the car ahead'
+            : lapsLeft < 8 ? ' — nothing left to save' : '';
+        say(`${c.driver.short || c.driver.name.split(' ').pop()} going to ${want}${why}.`,
           { kind: 'brief', from: 'engineer', priority: 'low', car: c.id, player: true });
       }
       return;
@@ -1664,7 +1671,6 @@ export function createWeekend(opts) {
       // Rival drivers manage themselves: hard early if they can, careful when
       // the tyre is going, flat out at the end.
       const lapsLeft = totalLaps - c.lap;
-      const fuelShort = c.fuel < lapsLeft * fuelPerLap * 1.01;
       const behindGap = race.gapBehind(c);
 
       // Air, as a driver experiences it. Sitting in someone's wake ruins the
@@ -1677,13 +1683,12 @@ export function createWeekend(opts) {
         return;
       }
       if (c._cooling && c.interval > 1.4) c._cooling = false;
-      if (behindGap != null && behindGap < 1.6 && !fuelShort && c.wear < 0.9) {
+      if (behindGap != null && behindGap < 1.6 && c.wear < 0.9) {
         c.mode = 'push';                      // he is in my mirrors: break the tow
         return;
       }
 
-      if (fuelShort && lapsLeft > 2) c.mode = 'conserve';
-      else if (c.wear > 0.88 && lapsLeft > 5) c.mode = 'conserve';
+      if (c.wear > 0.88 && lapsLeft > 5) c.mode = 'conserve';
       else if (lapsLeft < 8 || c.interval < 1.2) c.mode = 'push';
       else c.mode = 'neutral';
       return;
@@ -1705,15 +1710,21 @@ export function createWeekend(opts) {
 
   // ---- fuel --------------------------------------------------------------
 
+  /**
+   * Burn fuel, which is only ever about mass.
+   *
+   * There is no such thing as running dry here. The tank is filled for the
+   * distance at the highest burn rate the engine can ask for, and a floor
+   * keeps the number positive whatever happens above. What survives is the
+   * part worth having: the car is heavy and lazy at the start and light and
+   * alive at the end, and a driver on push pays for it in weight he is still
+   * carrying rather than in a lift-and-coast lecture over the radio.
+   */
+  const FUEL_FLOOR = fuelPerLap * 0.5;
+
   function fuelBurn(c, dtLaps) {
     const mul = c.mode === 'push' ? 1.055 : c.mode === 'conserve' ? 0.935 : 1;
-    const burn = fuelPerLap * mul * dtLaps;
-    c.fuel = Math.max(0, c.fuel - burn);
-    const lapsLeft = totalLaps - c.lap;
-    const needed = lapsLeft * fuelPerLap;
-    // Short on fuel: the driver has to lift and coast, and it costs real time.
-    c.fuelSave = c.fuel < needed ? Math.min(1, (needed - c.fuel) / Math.max(0.5, needed * 0.25)) : 0;
-    if (c.fuel <= 0.001 && c.lap < totalLaps - 1) retire(c, 'out of fuel');
+    c.fuel = Math.max(FUEL_FLOOR, c.fuel - fuelPerLap * mul * dtLaps);
   }
 
   // ---- the step ----------------------------------------------------------

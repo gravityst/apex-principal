@@ -20,6 +20,52 @@
   --radius: 10px;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, system-ui, sans-serif;
+
+  /* ---- elevation -------------------------------------------------------
+     Four surfaces, each a step further off the page, plus the borders and
+     shadows that go with them. Before this every panel was --panel and the
+     only way to say "this one matters" was to draw a brighter line round it,
+     which is why the race screen read as one flat sheet of boxes. */
+  --surface-0: #0a0f18;       /* the page under everything */
+  --surface-1: #111825;       /* a panel */
+  --surface-2: #172030;       /* a panel raised off a panel */
+  --surface-3: #1f2a3d;       /* the thing you are meant to look at */
+  --line-strong: #32445f;
+  --line-faint: #16202f;
+  --elev-1: 0 1px 2px rgba(0,0,0,.34);
+  --elev-2: 0 4px 14px rgba(0,0,0,.40);
+  --elev-3: 0 12px 34px rgba(0,0,0,.50);
+
+  /* ---- type scale ------------------------------------------------------
+     A ratio, not a pile of arbitrary pixel values. Every size in the app
+     comes from here so that two things the same size are the same size on
+     purpose. */
+  --t-2xs: 9.5px;
+  --t-xs: 11px;
+  --t-sm: 12.5px;
+  --t-md: 14px;
+  --t-lg: 16px;
+  --t-xl: 19px;
+  --t-2xl: 23px;
+  --t-3xl: 30px;
+  --lh-tight: 1.2;
+  --lh-snug: 1.38;
+  --lh-body: 1.5;
+
+  /* ---- rhythm ---------------------------------------------------------- */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+
+  /* ---- motion ----------------------------------------------------------
+     Short enough to feel like response, long enough to be seen. */
+  --ease: cubic-bezier(.2, .7, .3, 1);
+  --t-fast: 150ms;
+  --t-med: 220ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-fast: 1ms; --t-med: 1ms; }
+  * { animation-duration: 1ms !important; animation-iteration-count: 1 !important; }
 }
 
 * { box-sizing: border-box; }
@@ -34,6 +80,19 @@ body {
 }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
+
+/* One transition rule for everything you can press, rather than thirty. */
+button, .btn, .dbtn, .tabbtn, .nav button, .scell, .offer, .arearow, .teamopt,
+.t2row, .lapchip, .modebtn {
+  transition:
+    background-color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    box-shadow var(--t-med) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+button:active, .btn:active, .dbtn:active, .tabbtn:active { transform: translateY(1px); }
+:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; border-radius: 4px; }
 h1, h2, h3, h4 { margin: 0; font-weight: 650; letter-spacing: -0.01em; }
 a { color: var(--accent-2); }
 
@@ -105,8 +164,69 @@ main { flex: 1; padding: 20px; max-width: 1340px; width: 100%; margin: 0 auto; }
 .g-race { grid-template-columns: minmax(0, 340px) minmax(0, 1fr) minmax(0, 330px); }
 
 .panel {
-  background: var(--panel); border: 1px solid var(--line-soft);
-  border-radius: var(--radius); padding: 16px; min-width: 0;
+  background: var(--surface-1); border: 1px solid var(--line-soft);
+  border-radius: var(--radius); padding: var(--sp-4); min-width: 0;
+  box-shadow: var(--elev-1);
+}
+
+/* ---- research and development ----
+   Eight departments, eight decisions, eight cards. As a table it was a wall
+   of sliders; as cards each one can say whether it has money on it, what that
+   money is expected to deliver, and what it costs per point — which is the
+   whole of the decision. */
+.rdcard {
+  display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: var(--sp-4); align-items: center;
+  padding: 11px 13px; margin-bottom: 7px;
+  background: var(--surface-1);
+  border: 1px solid var(--line-faint);
+  border-left: 3px solid transparent;
+  border-radius: 10px;
+  transition: background-color var(--t-fast) var(--ease),
+              border-color var(--t-fast) var(--ease),
+              box-shadow var(--t-med) var(--ease);
+}
+.rdcard:hover { background: var(--surface-2); border-color: var(--line); }
+.rdcard.funded { border-left-color: var(--accent); background: var(--surface-2); }
+.rdcard.funded:hover { box-shadow: var(--elev-2); }
+.rdcard.best { border-left-color: var(--accent-2); }
+.rdcard.best.funded { border-left-color: var(--accent); }
+
+.rd-hd { display: flex; align-items: baseline; gap: var(--sp-2); margin-bottom: 5px; }
+.rd-hd b { font-size: var(--t-md); font-weight: 650; }
+.rd-lv {
+  margin-left: auto; font-size: var(--t-sm); color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.rdrank {
+  font-size: var(--t-2xs); letter-spacing: .12em; font-weight: 800;
+  padding: 2px 6px; border-radius: 999px;
+  color: var(--accent-2); border: 1px solid rgba(0,215,177,.4);
+  background: rgba(0,215,177,.10);
+}
+.rdrank.r1, .rdrank.r2 { color: var(--ink-3); border-color: var(--line); background: none; }
+.rd-blurb { font-size: var(--t-xs); color: var(--ink-3); margin-top: 6px; line-height: var(--lh-snug); }
+
+.rd-nums {
+  display: flex; align-items: baseline; gap: var(--sp-3);
+  font-size: var(--t-xs); color: var(--ink-3);
+}
+.rd-spend {
+  font-family: var(--mono); font-size: var(--t-sm); font-weight: 700; color: var(--ink-2);
+}
+.rdcard.funded .rd-spend { color: var(--ink); }
+.rd-pts { font-weight: 700; color: var(--ink-3); }
+.rd-pts.on { color: var(--good); }
+.rd-rate { margin-left: auto; font-family: var(--mono); }
+/* How much of this round's budget this one department is taking. */
+.rd-share { height: 3px; border-radius: 2px; background: var(--line-faint); margin-top: 7px; }
+.rd-share i {
+  display: block; height: 100%; border-radius: 2px; background: var(--accent);
+  transition: width var(--t-med) var(--ease);
+}
+
+@media (max-width: 760px) {
+  .rdcard { grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
 }
 .panel.tight { padding: 12px; }
 .panel h3 {
@@ -342,25 +462,104 @@ canvas.r3d {
 
 /* ---------- strategy panel ---------- */
 
+/* ---- the call ----
+   The single most important object on the race screen: one sentence telling
+   you what to do about the race you are looking at. It used to be a 13px
+   paragraph in a box the same colour as six other boxes. Now it announces its
+   own urgency, sets its own type, and lifts off the panel behind it. */
 .call {
-  border-radius: 8px; padding: 11px 13px; font-size: 13.5px; line-height: 1.5;
-  border-left: 3px solid var(--ink-3); background: #131c2b; color: var(--ink);
+  --call-accent: var(--ink-3);
+  position: relative;
+  border-radius: 10px;
+  padding: 11px 14px 13px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--call-accent);
+  box-shadow: var(--elev-2);
+  transition: background-color var(--t-med) var(--ease), border-color var(--t-med) var(--ease);
 }
-.call.pri-high { border-left-color: var(--bad); background: #24141a; }
-.call.pri-act { border-left-color: var(--accent); background: #241c0c; }
-.call.pri-none { border-left-color: var(--line); background: #131c2b; color: var(--ink-2); }
+.call .ch { display: flex; align-items: baseline; gap: var(--sp-2); margin-bottom: 5px; }
+.call .cw {
+  font-size: var(--t-2xs); letter-spacing: .18em; font-weight: 800;
+  color: var(--ink-3); text-transform: uppercase;
+}
+.call .cu {
+  margin-left: auto;
+  font-size: var(--t-2xs); letter-spacing: .14em; font-weight: 800;
+  padding: 2px 7px; border-radius: 999px;
+  color: var(--call-accent);
+  background: color-mix(in srgb, var(--call-accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--call-accent) 42%, transparent);
+}
+.call .ct {
+  margin: 0;
+  font-size: var(--t-lg); line-height: var(--lh-snug); font-weight: 560;
+  color: var(--ink); letter-spacing: -0.005em;
+}
 
+.call.pri-high {
+  --call-accent: var(--bad);
+  background: linear-gradient(180deg, #2a1017, #1d1018);
+  border-color: rgba(255,71,87,.42);
+  box-shadow: var(--elev-2), 0 0 0 1px rgba(255,71,87,.14), 0 0 26px -8px rgba(255,71,87,.5);
+}
+.call.pri-high .ct { font-weight: 650; color: #fff; }
+.call.pri-act {
+  --call-accent: var(--accent);
+  background: linear-gradient(180deg, #2b1d07, #1c1610);
+  border-color: rgba(255,138,0,.38);
+  box-shadow: var(--elev-2), 0 0 22px -10px rgba(255,138,0,.55);
+}
+.call.pri-act .ct { font-weight: 620; }
+.call.pri-none {
+  --call-accent: var(--line-strong);
+  background: var(--surface-1);
+}
+.call.pri-none .ct { font-size: var(--t-md); font-weight: 500; color: var(--ink-2); }
+
+/* A call you must answer earns exactly one pulse of attention, then stops. */
+.call.pri-high::after {
+  content: ''; position: absolute; inset: -1px; border-radius: 10px;
+  border: 1px solid rgba(255,71,87,.8); pointer-events: none;
+  animation: callping 1.6s var(--ease) 3;
+}
+@keyframes callping { 0%, 100% { opacity: 0; } 42% { opacity: .85; } }
+
+/* ---- strategy cards ----
+   Nine numbers that answer nine questions. Hairline rules between them rather
+   than nine separate boxes, so the block reads as one instrument panel; each
+   cell lifts under the pointer so it is clear they are readings, not buttons
+   pretending to be readings. */
 .stratgrid {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft);
-  border-radius: 8px; overflow: hidden; margin-top: 12px;
+  gap: 1px; background: var(--line-faint);
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  margin-top: var(--sp-3); box-shadow: var(--elev-1);
 }
-.scell { background: var(--panel); padding: 9px 10px; min-width: 0; }
-.scell .sk { font-size: 9.5px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-3); font-weight: 700; }
-.scell .sv { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; line-height: 1.15; }
+.scell {
+  background: var(--surface-1); padding: 10px 11px 11px; min-width: 0;
+  border-top: 2px solid transparent;
+}
+.scell:hover { background: var(--surface-2); }
+.scell .sk {
+  font-size: var(--t-2xs); letter-spacing: 0.13em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 700;
+}
+.scell .sv {
+  font-size: var(--t-xl); font-weight: 700; font-variant-numeric: tabular-nums;
+  margin-top: 3px; line-height: var(--lh-tight); letter-spacing: -0.015em;
+}
 .scell .sv.good { color: var(--good); } .scell .sv.bad { color: var(--bad); }
 .scell .sv.warn { color: var(--warn); } .scell .sv.dim { color: var(--ink-3); }
-.scell .ss { font-size: 10.5px; color: var(--ink-3); margin-top: 3px; line-height: 1.35; }
+/* A reading that has gone bad marks its own cell, so the block can be
+   scanned by colour before it is read by number. */
+.scell:has(.sv.bad) { border-top-color: var(--bad); background: #1a1219; }
+.scell:has(.sv.warn) { border-top-color: var(--warn); }
+.scell:has(.sv.good) { border-top-color: color-mix(in srgb, var(--good) 55%, transparent); }
+.scell .ss {
+  font-size: var(--t-xs); color: var(--ink-3); margin-top: 4px;
+  line-height: var(--lh-snug);
+}
 
 .laprow { margin-top: 12px; }
 .laps { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -501,8 +700,8 @@ body.racing main { max-width: none; padding: 0; }
 
 .ov.top {
   top: 0; left: 0; right: 0; padding: 14px 16px 26px;
-  display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap;
-  background: linear-gradient(180deg, rgba(4,7,12,.80), rgba(4,7,12,0));
+  display: flex; align-items: flex-start; gap: var(--sp-4); flex-wrap: wrap;
+  background: linear-gradient(180deg, rgba(4,7,12,.86), rgba(4,7,12,.28) 62%, rgba(4,7,12,0));
 }
 .lapbox { display: flex; align-items: baseline; gap: 7px; text-shadow: 0 2px 12px rgba(0,0,0,.9); }
 .lapbox .lk {
@@ -536,25 +735,79 @@ body.racing main { max-width: none; padding: 0; }
 /* ---- the timing window ---- */
 
 .ov.tower2 {
-  top: 98px; right: 14px; width: 256px;
+  top: 98px; right: 14px; width: 274px;
   display: flex; flex-direction: column; gap: 3px;
 }
 .t2row {
-  display: grid; grid-template-columns: 22px 4px minmax(0,1fr) 22px 50px 30px;
-  gap: 6px; align-items: center; height: 31px; padding: 0 9px;
+  --row-team: var(--line-strong);
+  position: relative;
+  display: grid; grid-template-columns: 22px 4px minmax(0,1fr) 20px 58px 34px;
+  gap: 6px; align-items: center; height: 33px; padding: 0 9px 0 10px;
   background: rgba(9,14,22,.66); backdrop-filter: blur(9px);
   border: 1px solid rgba(120,145,185,.16); border-radius: 8px;
+  will-change: transform;
 }
-.t2row .p { font-family: var(--mono); font-weight: 800; font-size: 14px; color: var(--ink-2); text-align: right; }
-.t2row > i { display: block; width: 4px; height: 19px; border-radius: 2px; }
-.t2row .nm { font-size: 13px; font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.t2row .gp { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); text-align: right; }
-.t2row .ty { font-family: var(--mono); font-size: 11.5px; font-weight: 800; text-align: right; }
-.t2row.me { background: rgba(52,31,4,.86); border-color: rgba(255,138,0,.75); }
-.t2row.me .p { color: #ffc478; }
-.t2row.me .nm { color: #ffd9a8; }
+.t2row .p {
+  font-family: var(--mono); font-weight: 800; font-size: var(--t-md);
+  color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums;
+}
+.t2row > i { display: block; width: 4px; height: 20px; border-radius: 2px; }
+.t2row .nm {
+  font-size: var(--t-sm); font-weight: 750; letter-spacing: .01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* The gap, with its own length drawn underneath it. */
+.t2row .gpw { display: block; text-align: right; line-height: 1; }
+.t2row .gp {
+  display: block; font-family: var(--mono); font-size: var(--t-sm);
+  color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
+.t2row .gb {
+  display: block; height: 2px; margin: 3px 0 0 auto; border-radius: 1px;
+  background: var(--ink-3); opacity: .55;
+  transition: width var(--t-med) var(--ease), background-color var(--t-fast) var(--ease);
+}
+.t2row .gb.near { background: var(--warn); opacity: .8; }
+.t2row .gb.drs { background: var(--accent-2); opacity: 1; }
+
+/* Compound as a letter you can read by colour, age as a number beside it. */
+.t2row .ty {
+  display: flex; align-items: baseline; justify-content: flex-end; gap: 3px;
+  font-family: var(--mono); font-weight: 800; font-size: var(--t-xs);
+}
+.t2row .ty b {
+  display: inline-grid; place-items: center;
+  width: 15px; height: 15px; border-radius: 50%;
+  font-size: 9px; line-height: 1;
+  color: inherit; border: 1.5px solid currentColor;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+.t2row .ty .age { color: var(--ink-3); font-weight: 700; }
+
+/* Hierarchy: your cars carry their team colour and sit forward of the field;
+   the one the camera is on is brighter again. Everything else recedes. */
+.t2row.me {
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--row-team) 26%, rgba(9,14,22,.88)), rgba(9,14,22,.86));
+  border-color: color-mix(in srgb, var(--row-team) 62%, transparent);
+  box-shadow: var(--elev-2);
+}
+.t2row.me .p, .t2row.me .nm { color: #fff; }
+.t2row.me .gp { color: #dbe6f5; }
+.t2row.focus {
+  border-color: var(--accent);
+  box-shadow: var(--elev-2), 0 0 0 1px rgba(255,138,0,.4);
+}
+.t2row.focus::before {
+  content: ''; position: absolute; left: -6px; top: 50%;
+  width: 0; height: 0; transform: translateY(-50%);
+  border: 4px solid transparent; border-left-color: var(--accent);
+}
 .t2row.inpit { opacity: .58; }
-.t2row.out { opacity: .38; text-decoration: line-through; }
+.t2row.inpit .gp { color: var(--warn); }
+.t2row.out { opacity: .34; }
+.t2row.out .nm { text-decoration: line-through; }
 .t2gap {
   text-align: center; color: rgba(232,238,248,.32); font-size: 11px;
   letter-spacing: .4em; height: 13px; line-height: 9px;
@@ -567,20 +820,60 @@ body.racing main { max-width: none; padding: 0; }
   display: flex; flex-direction: column; gap: 10px;
   background: linear-gradient(0deg, rgba(4,7,12,.88) 55%, rgba(4,7,12,0));
 }
+/* ---- the callout ----
+   The engineer's call, on the track, and the loudest thing on the screen
+   after the cars themselves. Everything else here is a readout; this is the
+   one object that asks you for a decision, so it is allowed to shout. */
 .callout {
-  align-self: flex-start; max-width: 620px;
-  display: flex; align-items: center; gap: 13px; padding: 11px 17px;
-  border-radius: 11px; background: rgba(10,15,24,.88); backdrop-filter: blur(11px);
-  border: 1px solid rgba(120,145,185,.24); border-left: 4px solid var(--accent);
-  box-shadow: 0 12px 34px rgba(0,0,0,.5);
+  --call-accent: var(--accent);
+  --call-team: var(--accent);
+  align-self: flex-start; max-width: 680px;
+  display: flex; align-items: stretch; gap: 14px; padding: 12px 20px 13px 16px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(16,22,34,.94), rgba(9,13,21,.94));
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(120,145,185,.26);
+  border-left: 5px solid var(--call-accent);
+  box-shadow: var(--elev-3), 0 0 0 1px rgba(0,0,0,.4);
+  animation: calloutin var(--t-med) var(--ease);
 }
-.callout.pri-high { border-left-color: var(--bad); background: rgba(34,14,18,.9); }
+@keyframes calloutin { from { opacity: 0; transform: translateY(8px); } }
+.callout.pri-high {
+  --call-accent: var(--bad);
+  background: linear-gradient(180deg, rgba(42,16,23,.95), rgba(20,12,17,.95));
+  border-color: rgba(255,71,87,.40);
+  box-shadow: var(--elev-3), 0 0 34px -12px rgba(255,71,87,.75);
+}
+.callout.pri-act {
+  --call-accent: var(--accent);
+  box-shadow: var(--elev-3), 0 0 30px -14px rgba(255,138,0,.7);
+}
 .callout .who {
   font-size: 10px; font-weight: 800; letter-spacing: .16em; color: var(--accent);
   white-space: nowrap;
 }
-.callout.pri-high .who { color: #ff7f8e; }
-.callout .what { font-size: 14px; line-height: 1.45; font-weight: 600; }
+.callout.pri-high .who b { color: #ff9aa5; }
+.callout .who {
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  padding-right: 14px; border-right: 1px solid rgba(120,145,185,.22);
+}
+.callout .who b {
+  font-family: var(--mono); font-size: var(--t-lg); font-weight: 800;
+  letter-spacing: .04em; color: var(--call-team); line-height: 1;
+}
+.callout .who .pos {
+  font-size: var(--t-2xs); letter-spacing: .14em; font-weight: 800; color: var(--ink-3);
+}
+.callout .what { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.callout .what .urg {
+  font-size: var(--t-2xs); letter-spacing: .18em; font-weight: 800;
+  color: var(--call-accent);
+}
+.callout .what .txt {
+  font-size: var(--t-lg); line-height: var(--lh-snug); font-weight: 600;
+  color: var(--ink); letter-spacing: -0.005em;
+}
+.callout.pri-high .what .txt { font-weight: 680; color: #fff; }
 
 .ov.bottom.compact { padding-top: 18px; }
 .ov.bottom.compact .callout { display: none; }
@@ -744,7 +1037,8 @@ body.racing main { max-width: none; padding: 0; }
 .lapwrap .sk { font-size: 9.5px; letter-spacing: .15em; font-weight: 800; color: var(--ink-3); margin-bottom: 7px; }
 .lapwrap .laps { display: flex; gap: 6px; flex-wrap: wrap; }
 
-.sheet .call { font-size: 14.5px; padding: 13px 15px; }
+.sheet .call .ct { font-size: var(--t-lg); }
+.sheet .call { padding: 13px 15px; }
 .sheet .stratgrid { margin-top: 14px; }
 .sheet .scell { padding: 11px 12px; }
 .sheet .scell .sv { font-size: 19px; }
@@ -790,8 +1084,8 @@ body.racing main { max-width: none; padding: 0; }
 }
 @media (max-width: 860px) {
   .ov.tower2 { width: 196px; top: 90px; }
-  .t2row { grid-template-columns: 20px 4px minmax(0,1fr) 48px; padding: 0 8px; height: 28px; }
-  .t2row .ty { display: none; }
+  .t2row { grid-template-columns: 20px 4px minmax(0,1fr) 54px; padding: 0 8px; height: 29px; }
+  .t2row .ty, .t2row .mv { display: none; }
   .decks { overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
   .decks::-webkit-scrollbar { display: none; }
   .deck { flex: 0 0 88%; scroll-snap-align: center; }
@@ -816,10 +1110,14 @@ body.racing main { max-width: none; padding: 0; }
 
   .ov.bottom { padding: 22px 8px 8px; gap: 7px; }
   .callout { padding: 8px 11px; gap: 9px; }
-  .callout .who { font-size: 9px; }
-  .callout .what {
-    font-size: 12px; line-height: 1.35;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  .callout .who b { font-size: var(--t-md); }
+  .callout .who .pos { display: none; }
+  .callout .what .urg { font-size: 8.5px; letter-spacing: .13em; }
+  .callout .what .txt { font-size: var(--t-md); }
+  .callout .what { display: flex; flex-direction: column; gap: 2px; }
+  .callout .what .txt {
+    font-size: var(--t-md); line-height: var(--lh-snug);
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
   }
 
   .deck { flex: 0 0 94%; padding: 8px 10px 9px; border-radius: 11px; }
@@ -914,17 +1212,34 @@ body.racing main { max-width: none; padding: 0; }
   body.racing .topbar .teamchip { display: none; }
   body.racing .topbar { padding: 6px 12px; }
 
-  /* One cycling button each instead of six. */
+  /* One cycling button each instead of six, and every one of them big enough
+     to hit with a thumb while the race is running. 44px is the smallest
+     target anyone should have to find at 5x speed. */
   .dock .dbtn.dfull, .dock .dlbl { display: none; }
   .dock .dcycle { display: inline-flex; align-items: baseline; }
   .dock .zoomgrp { display: none; }
-  .dock { gap: 7px 8px; padding: 7px 10px; }
+  .dock { gap: 8px; padding: 8px 10px; }
   .dock .spacer { display: none; }
-  .dock .dgrp { gap: 4px; }
-  .dbtn { padding: 7px 10px; font-size: 12.5px; }
-  .tabbtn { padding: 8px 10px; font-size: 12.5px; flex: 1 1 0; text-align: center; }
-  .dock .tabs { flex: 1 1 100%; gap: 6px; order: 9; }
+  .dock .dgrp { gap: 6px; }
+  .dbtn {
+    min-height: 44px; padding: 10px 14px; font-size: var(--t-md);
+    border-radius: 10px;
+  }
+  .dock .dgrp:first-child .dbtn { min-width: 46px; justify-content: center; }
+  .tabbtn {
+    min-height: 44px; padding: 11px 12px; font-size: var(--t-md);
+    flex: 1 1 0; text-align: center; border-radius: 10px;
+  }
+  .dock .tabs { flex: 1 1 100%; gap: 7px; order: 9; }
   .dock .dbtn.sim { order: 8; }
+  /* Four rows of controls is most of a phone. The speed row and the camera
+     row each take one; everything else shares the third. */
+  .dock .dgrp { flex: 1 1 auto; }
+  .dock .dgrp:first-child { flex: 1 1 100%; justify-content: space-between; }
+  .dock .dgrp:first-child .dbtn { flex: 1 1 0; }
+  .dock .dbtn.sim, .dock .dbtn.tostop { flex: 1 1 0; min-width: 0; }
+  /* The mode buttons on a deck are the ones that change the race. */
+  .modebtn, .deck .dmode button { min-height: 52px; }
 
   /* A flag is the one thing that must not be missed, so on a narrow screen it
      is a banner across the top rather than a chip fighting the lap counter. */
@@ -948,6 +1263,18 @@ body.racing main { max-width: none; padding: 0; }
   .topbar { gap: 8px; }
 }
 
+/* Progressive collapse. A short screen gives up the readouts it can spare —
+   sector times, then lap history, then the telemetry row — before it gives up
+   any of the track, because the track is the thing you came for. */
+@media (max-height: 760px) and (max-width: 760px) {
+  .dsec { display: none; }
+  .deck .lapwrap { display: none; }
+}
+@media (max-height: 640px) and (max-width: 760px) {
+  .dtel .gaps { font-size: var(--t-xs); }
+  .deck .tnote { display: none; }
+}
+
 .tierbadge { white-space: nowrap; }
 .offer .hd { flex-wrap: wrap; row-gap: 4px; }
 
@@ -955,9 +1282,15 @@ body.racing main { max-width: none; padding: 0; }
 
 .ov.mini {
   top: 96px; left: 14px; width: 168px;
-  background: rgba(9,14,22,.62); backdrop-filter: blur(9px);
-  border: 1px solid rgba(120,145,185,.20); border-radius: 10px; padding: 6px;
+  background: rgba(7,11,18,.55); backdrop-filter: blur(10px);
+  border: 1px solid rgba(120,145,185,.16); border-radius: 12px; padding: 7px;
+  box-shadow: var(--elev-2);
+  transition: opacity var(--t-med) var(--ease);
 }
+/* The map is orientation, not information you stare at. It steps back while
+   you are reading anything else, and comes forward when you look at it. */
+.ov.mini { opacity: .72; }
+.ov.mini:hover { opacity: 1; }
 .ov.mini canvas.minimap { display: block; width: 100%; height: auto; }
 
 .ov.startlights {
@@ -985,7 +1318,7 @@ body.racing main { max-width: none; padding: 0; }
 
 @media (max-width: 1080px) { .ov.mini { width: 138px; top: 90px; } }
 @media (max-width: 860px) {
-  .t2row { grid-template-columns: 19px 3px minmax(0,1fr) 18px 44px; gap: 5px; padding: 0 7px; }
+  .t2row { grid-template-columns: 19px 3px minmax(0,1fr) 18px 52px; gap: 5px; padding: 0 7px; }
   .ov.mini { width: 112px; top: 84px; left: 10px; padding: 4px; }
   .lights > i { width: 18px; height: 18px; }
 }
@@ -1026,16 +1359,29 @@ body.racing main { max-width: none; padding: 0; }
 }
 .ov.radiolive > * { pointer-events: none; }
 .lrm {
-  border-left: 3px solid var(--line); border-radius: 0 9px 9px 0;
-  padding: 7px 11px; background: rgba(10,16,25,.80); backdrop-filter: blur(9px);
-  box-shadow: 0 6px 20px rgba(0,0,0,.4);
-  animation: lrin .22s ease;
+  border-left: 3px solid var(--line); border-radius: 0 10px 10px 0;
+  padding: 7px 12px; background: rgba(8,13,21,.78); backdrop-filter: blur(10px);
+  box-shadow: var(--elev-2);
+  animation: lrin var(--t-med) var(--ease);
 }
 @keyframes lrin { from { opacity: 0; transform: translateX(-10px); } }
-.lrh { display: flex; gap: 8px; align-items: baseline; margin-bottom: 2px; }
+.lrh { display: flex; gap: var(--sp-2); align-items: baseline; margin-bottom: 2px; }
 .lrh .who { font-size: 8.5px; letter-spacing: .16em; font-weight: 800; color: var(--ink-3); }
 .lrh .when { margin-left: auto; font-family: var(--mono); font-size: 8.5px; color: var(--ink-3); }
-.lrt { font-size: 12.5px; line-height: 1.4; color: var(--ink); }
+.lrt { font-size: var(--t-sm); line-height: var(--lh-snug); color: var(--ink); }
+
+/* Hierarchy in the feed. The newest message is the one that matters, and a
+   feed where every line is equally loud is a feed nobody reads — so age is
+   worth contrast, and only the top line is at full strength. */
+.ov.radiolive .lrm:first-child { background: rgba(10,17,27,.90); border-left-width: 4px; }
+.ov.radiolive .lrm:first-child .lrt { font-size: var(--t-md); font-weight: 560; }
+.ov.radiolive .lrm:nth-child(n+2) .lrt { color: var(--ink-2); }
+.ov.radiolive .lrm:nth-child(n+3) { padding: 5px 12px; }
+.ov.radiolive .lrm:nth-child(n+3) .lrt { font-size: var(--t-xs); }
+.ov.radiolive .lrm:nth-child(n+3) .lrh { display: none; }
+/* Race control outranks everything: it is the only voice that changes the
+   rules of the race you are in. */
+.lrm.from-control { box-shadow: var(--elev-2), 0 0 20px -8px rgba(245,197,24,.6); }
 
 .lrm.from-engineer { border-left-color: var(--accent-2); background: rgba(10,32,29,.82); }
 .lrm.from-engineer .who { color: var(--accent-2); }
@@ -1055,7 +1401,10 @@ body.racing main { max-width: none; padding: 0; }
      each, three quarters of the width, hard against the left edge. */
   .ov.radiolive { left: 10px; right: auto; width: min(74%, 320px); top: 88px; }
   .lrm:nth-child(n+3) { display: none; }
-  .lrm { padding: 6px 9px; background: rgba(10,16,25,.72); }
+  /* Over bright asphalt a 72%-opaque panel is not a panel. */
+  .lrm { padding: 6px 9px; background: rgba(8,13,21,.90); }
+  .ov.radiolive .lrm:first-child { background: rgba(10,17,27,.94); }
+  .ov.radiolive .lrm:first-child .lrt { font-size: var(--t-sm); }
   .lrt {
     font-size: 11.5px; line-height: 1.32;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;

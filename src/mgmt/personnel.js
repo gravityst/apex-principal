@@ -49,9 +49,6 @@ export function driverPace(driver, ctx = {}) {
   // Following closely costs front grip in the corners.
   p -= (ctx.dirtyAir ?? 0) * 0.0145;
 
-  // Fuel saving is a real lift off the throttle, not a mood.
-  p -= (ctx.fuelSave ?? 0) * 0.0060;
-
   return p;
 }
 
