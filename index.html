@@ -2,17 +2,44 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <title>APEX: Principal</title>
 <meta name="description" content="A Formula-style team management simulator. Build the car, hire the people, spend the money, and call the race from the pit wall. Lap times come from a real quasi-steady-state solver, so every development point moves a genuine physical parameter.">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#070a10">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070a10'/%3E%3Cpath d='M6 23 L16 7 L26 23' stroke='%23ff8a00' stroke-width='3' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+
+<!-- Pinned to a home screen it should open like an app, not a bookmark. -->
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="APEX">
+
+<link rel="apple-touch-icon" sizes="180x180" href="./icons/apex-180.png">
+<link rel="apple-touch-icon" sizes="167x167" href="./icons/apex-167.png">
+<link rel="apple-touch-icon" sizes="152x152" href="./icons/apex-152.png">
+<link rel="apple-touch-icon" sizes="120x120" href="./icons/apex-120.png">
+<link rel="icon" type="image/png" sizes="32x32" href="./icons/apex-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="./icons/apex-192.png">
+<link rel="icon" type="image/svg+xml" href="./icons/icon.svg">
+
+<meta property="og:title" content="APEX: Principal">
+<meta property="og:description" content="Build the car, hire the people, spend the money, and call the race from the pit wall.">
+<meta property="og:image" content="./icons/apex-512.png">
+<meta name="twitter:card" content="summary_large_image">
+
 <link rel="stylesheet" href="./styles/principal.css">
 </head>
 <body>
 <div id="app"></div>
 <noscript><p style="padding:24px;font:15px system-ui;color:#e8eef8">APEX: Principal needs JavaScript.</p></noscript>
 <script type="module" src="./src/principal.js"></script>
+<script>
+// Offline shell. Best-effort: a sandboxed origin that refuses workers just
+// means the game needs the network, not that it breaks.
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}
+</script>
 </body>
 </html>

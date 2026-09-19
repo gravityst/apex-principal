@@ -12,6 +12,7 @@
  */
 
 import * as THREE from '../../vendor/three/build/three.module.js';
+import { surfaces } from './textures.js';
 
 // ---------------------------------------------------------------------------
 // Sky
@@ -85,6 +86,7 @@ export function buildWorld(track, opts) {
   const quality = opts.quality;
   const group = new THREE.Group();
   group.name = 'world';
+  const S = surfaces(quality.tier, quality.anisotropy || 4);
 
   const P = (i, off, lift = 0) => {
     const o = (i % n) * 3;
@@ -99,22 +101,31 @@ export function buildWorld(track, opts) {
   // instantly, which way the corner goes.
   {
     const verts = new Float32Array(n * 6);
+    const uvs = new Float32Array(n * 4);
     const idx = new Uint32Array(n * 6);
     for (let i = 0; i < n; i++) {
       const c = opts.racingLine(i / n);
-      const a = P(i, c - 1.9, 0.006), b = P(i, c + 1.9, 0.006);
+      const a = P(i, c - 2.6, 0.006), b = P(i, c + 2.6, 0.006);
       verts.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6);
+      const v = (i * track.step) / 24;
+      uvs.set([0, v, 1, v], i * 4);
       const j = (i + 1) % n, k = i * 6;
       idx[k] = i * 2; idx[k + 1] = j * 2; idx[k + 2] = i * 2 + 1;
       idx[k + 3] = j * 2; idx[k + 4] = j * 2 + 1; idx[k + 5] = i * 2 + 1;
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     g.setIndex(new THREE.BufferAttribute(idx, 1));
     g.computeVertexNormals();
-    group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-      color: 0x22242a, roughness: 0.78, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
-    })));
+    // Feathered at both edges by the texture's alpha. A hard-edged dark band
+    // down the middle of the road looked like paint, not like rubber.
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+      map: S.rubber, transparent: true, opacity: 0.80, depthWrite: false,
+      side: THREE.DoubleSide,
+    }));
+    m.renderOrder = 1;
+    group.add(m);
   }
 
   // ---- the pit lane --------------------------------------------------------
@@ -245,30 +256,115 @@ export function buildWorld(track, opts) {
   }
 
   // ---- gravel traps on the outside of the quick corners --------------------
+  // UVs come from world position, so the shingle keeps one scale however the
+  // trap widens and never smears round the outside of a corner.
   {
     const geoms = [];
+    const GT = 4.0;                                  // metres per gravel tile
+    // How much trap each sample deserves, smoothed along the lap so a trap
+    // grows out of the verge and shrinks back into it. Switched on and off by
+    // a threshold it appeared as a beige rectangle dropped on the grass.
+    const depth = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const k = Math.abs(track.curv[i]);
+      depth[i] = Math.max(0, Math.min(1, (k - 1 / 420) / (1 / 170 - 1 / 420)));
+    }
+    const smooth = new Float32Array(n);
+    const R = 9;
+    for (let i = 0; i < n; i++) {
+      let acc = 0;
+      for (let d = -R; d <= R; d++) acc += depth[(i + d + n) % n];
+      smooth[i] = acc / (R * 2 + 1);
+    }
+    const GW = (i) => 1.6 + smooth[i % n] * 9.6;
     for (let i = 0; i < n; i += 2) {
       const k = track.curv[i % n];
-      if (Math.abs(k) < 1 / 260) continue;
+      if (smooth[i % n] < 0.02) continue;
       const sign = k > 0 ? 1 : -1;                   // outside of the corner
       const w = track.width[i % n];
-      const a0 = P(i, sign * (w + 1.6), -0.02), a1 = P(i, sign * (w + 10.4), -0.04);
+      const a0 = P(i, sign * (w + 1.6), -0.02), a1 = P(i, sign * (w + GW(i)), -0.04);
       const b0 = P(i + 2, sign * (track.width[(i + 2) % n] + 1.6), -0.02);
-      const b1 = P(i + 2, sign * (track.width[(i + 2) % n] + 10.4), -0.04);
+      const b1 = P(i + 2, sign * (track.width[(i + 2) % n] + GW(i + 2)), -0.04);
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
         a0.x, a0.y, a0.z, a1.x, a1.y, a1.z, b0.x, b0.y, b0.z, b1.x, b1.y, b1.z,
       ]), 3));
+      g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([
+        a0.x / GT, a0.z / GT, a1.x / GT, a1.z / GT, b0.x / GT, b0.z / GT, b1.x / GT, b1.z / GT,
+      ]), 2));
       g.setIndex([0, 2, 1, 1, 2, 3]);
       g.computeVertexNormals();
       geoms.push(g);
     }
     if (geoms.length) {
       const m = new THREE.Mesh(mergeSimple(geoms), new THREE.MeshStandardMaterial({
-        color: 0x8d7f63, roughness: 1, side: THREE.DoubleSide,
+        map: S.gravel, color: 0xffffff, roughness: 1, side: THREE.DoubleSide,
       }));
       m.receiveShadow = !!quality.shadows;
       group.add(m);
+    }
+  }
+
+  // ---- tyre barriers and debris fencing ------------------------------------
+  // What actually sits on the outside of a corner: a stack of tyres strapped
+  // behind conveyor belting, and four metres of fencing above the wall so the
+  // circuit reads as enclosed rather than as a road through a field.
+  {
+    const tyreGeoms = [];
+    const TT = 3.2;                                  // metres per tyre-wall tile
+    for (let i = 0; i < n; i += 2) {
+      const k = track.curv[i % n];
+      if (Math.abs(k) < 1 / 300) continue;
+      const sign = k > 0 ? 1 : -1;
+      const a = P(i, sign * (track.width[i % n] + 10.8), 0);
+      const b = P(i + 2, sign * (track.width[(i + 2) % n] + 10.8), 0);
+      const h = 1.15;
+      const len = Math.hypot(b.x - a.x, b.z - a.z);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+        a.x, a.y, a.z, a.x, a.y + h, a.z, b.x, b.y, b.z, b.x, b.y + h, b.z,
+      ]), 3));
+      const u0 = (i * track.step) / TT, u1 = u0 + len / TT;
+      g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([
+        u0, 0, u0, 1, u1, 0, u1, 1,
+      ]), 2));
+      g.setIndex([0, 2, 1, 1, 2, 3]);
+      g.computeVertexNormals();
+      tyreGeoms.push(g);
+    }
+    if (tyreGeoms.length) {
+      group.add(new THREE.Mesh(mergeSimple(tyreGeoms), new THREE.MeshStandardMaterial({
+        map: S.tyreWall, color: 0xffffff, roughness: 0.95, side: THREE.DoubleSide,
+      })));
+    }
+
+    if (quality.tier !== 'low') {
+      const FT = 3.0;                                // metres per fence tile
+      for (const sign of [-1, 1]) {
+        const geoms = [];
+        for (let i = 0; i < n; i += 4) {
+          const a = P(i, sign * (track.width[i % n] + 11.4), 0);
+          const b = P(i + 4, sign * (track.width[(i + 4) % n] + 11.4), 0);
+          const len = Math.hypot(b.x - a.x, b.z - a.z);
+          const y0 = 1.5, y1 = 5.4;
+          const g = new THREE.BufferGeometry();
+          g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+            a.x, a.y + y0, a.z, a.x, a.y + y1, a.z, b.x, b.y + y0, b.z, b.x, b.y + y1, b.z,
+          ]), 3));
+          const u0 = (i * track.step) / FT, u1 = u0 + len / FT;
+          g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([
+            u0, 0, u0, 1.3, u1, 0, u1, 1.3,
+          ]), 2));
+          g.setIndex([0, 2, 1, 1, 2, 3]);
+          geoms.push(g);
+        }
+        const mesh = new THREE.Mesh(mergeSimple(geoms), new THREE.MeshBasicMaterial({
+          map: S.fence, transparent: true, opacity: 0.5, depthWrite: false,
+          side: THREE.DoubleSide, alphaTest: 0.04,
+        }));
+        mesh.renderOrder = 2;
+        group.add(mesh);
+      }
     }
   }
 
@@ -285,7 +381,12 @@ export function buildWorld(track, opts) {
       }
     }
     const tierMat = new THREE.MeshStandardMaterial({ color: 0x3b4455, roughness: 0.9 });
-    const crowdMat = new THREE.MeshStandardMaterial({ color: 0x6e7f9c, roughness: 1 });
+    // Actual people in the seats. A stand full of colour at a hundred metres is
+    // the difference between a race meeting and an industrial estate.
+    const crowdTex = S.crowd.clone();
+    crowdTex.needsUpdate = true;
+    crowdTex.repeat.set(1.7, 0.85);
+    const crowdMat = new THREE.MeshStandardMaterial({ map: crowdTex, color: 0xffffff, roughness: 1 });
     const roofMat = new THREE.MeshStandardMaterial({ color: 0x232a36, roughness: 0.7, metalness: 0.15 });
     for (const s of spots) {
       const a = P(s.i, s.sign * (track.width[s.i % n] + 13));
@@ -300,8 +401,8 @@ export function buildWorld(track, opts) {
       // Stepped seating: three tiers going back and up.
       for (let t = 0; t < 3; t++) {
         const depth = 4.5;
-        const hgt = 2.4 + t * 2.3;
-        const box = new THREE.Mesh(new THREE.BoxGeometry(length, hgt, depth), t === 1 ? crowdMat : tierMat);
+        const hgt = 2.2 + t * 1.9;
+        const box = new THREE.Mesh(new THREE.BoxGeometry(length, hgt, depth), t > 0 ? crowdMat : tierMat);
         box.position.copy(mid).addScaledVector(out, 2.6 + t * depth).setY(mid.y + hgt / 2);
         box.rotation.y = angle;
         box.castShadow = false;
@@ -367,17 +468,24 @@ export function buildWorld(track, opts) {
 
 /** Merge a handful of small non-indexed-friendly geometries into one buffer. */
 function mergeSimple(geoms) {
-  let vCount = 0, iCount = 0;
+  let vCount = 0, iCount = 0, hasUV = geoms.length > 0;
   for (const g of geoms) {
     vCount += g.getAttribute('position').count;
     iCount += g.getIndex() ? g.getIndex().count : 0;
+    if (!g.getAttribute('uv')) hasUV = false;
   }
   const pos = new Float32Array(vCount * 3);
+  // Carrying UVs through the merge is the whole reason the gravel looks like
+  // shingle and the tyre wall like tyres. Dropping them silently gave a
+  // perfectly lit sheet of flat colour, which is the hardest kind of bug to
+  // see: nothing errors, it just looks cheap.
+  const uv = hasUV ? new Float32Array(vCount * 2) : null;
   const idx = new Uint32Array(iCount);
   let vo = 0, io = 0, base = 0;
   for (const g of geoms) {
     const p = g.getAttribute('position');
     pos.set(p.array, vo * 3);
+    if (uv) uv.set(g.getAttribute('uv').array, vo * 2);
     const gi = g.getIndex();
     if (gi) for (let k = 0; k < gi.count; k++) idx[io + k] = gi.array[k] + base;
     io += gi ? gi.count : 0;
@@ -387,6 +495,7 @@ function mergeSimple(geoms) {
   }
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  if (uv) out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   out.setIndex(new THREE.BufferAttribute(idx, 1));
   out.computeVertexNormals();
   return out;

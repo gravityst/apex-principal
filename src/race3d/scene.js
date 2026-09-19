@@ -17,6 +17,7 @@
 import * as THREE from '../../vendor/three/build/three.module.js';
 import { createCarModel } from './carModel.js';
 import { buildSky, buildWorld, createPuffs } from './world.js';
+import { surfaces } from './textures.js';
 import { racingLine } from '../mgmt/track.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -55,8 +56,14 @@ function buildTrackMesh(track, quality) {
   }
   track._frame = { pos, lat };
 
-  /** Build a closed ribbon at a constant offset band from the centreline. */
-  function ribbon(innerFn, outerFn, yLift, material, uvRepeat = 0.06) {
+  /**
+   * Build a closed ribbon at a constant offset band from the centreline.
+   *
+   * `tile` is how many metres one texture tile covers. Given it, the UVs are
+   * laid out in metres rather than 0..1 across, so a texture keeps its scale
+   * where the track widens and never smears through a corner.
+   */
+  function ribbon(innerFn, outerFn, yLift, material, tile = 0) {
     const verts = new Float32Array(n * 2 * 3);
     const uvs = new Float32Array(n * 2 * 2);
     const idx = new Uint32Array(n * 6);
@@ -69,9 +76,11 @@ function buildTrackMesh(track, quality) {
       verts[i * 6 + 3] = pos[o] + lat[o] * b;
       verts[i * 6 + 4] = pos[o + 1] + yLift;
       verts[i * 6 + 5] = pos[o + 2] + lat[o + 2] * b;
-      const v = i * track.step * uvRepeat;
-      uvs[i * 4] = 0; uvs[i * 4 + 1] = v;
-      uvs[i * 4 + 2] = 1; uvs[i * 4 + 3] = v;
+      const v = tile ? (i * track.step) / tile : i * track.step * 0.06;
+      uvs[i * 4] = tile ? a / tile : 0;
+      uvs[i * 4 + 1] = v;
+      uvs[i * 4 + 2] = tile ? b / tile : 1;
+      uvs[i * 4 + 3] = v;
       const j = (i + 1) % n;
       const k = i * 6;
       idx[k] = i * 2; idx[k + 1] = j * 2; idx[k + 2] = i * 2 + 1;
@@ -88,14 +97,38 @@ function buildTrackMesh(track, quality) {
   }
 
   const W = (i) => track.width[i];
+  const S = surfaces(quality.tier, quality.anisotropy || 4);
 
-  // Run-off apron, well outside the white lines.
-  group.add(ribbon((i) => -W(i) - 14, (i) => W(i) + 14, -0.06,
-    new THREE.MeshStandardMaterial({ color: 0x2f3b30, roughness: 1, metalness: 0, side: THREE.DoubleSide })));
+  // Run-off apron, well outside the white lines. Mown grass, with the stripes
+  // a groundsman leaves, because a flat green band reads as a colour swatch.
+  group.add(ribbon((i) => -W(i) - 16, (i) => W(i) + 16, -0.06,
+    new THREE.MeshStandardMaterial({
+      map: S.grass, color: 0xffffff, roughness: 1, metalness: 0, side: THREE.DoubleSide,
+    }), 11.0));
 
-  // Asphalt.
-  group.add(ribbon((i) => -W(i) - 0.9, (i) => W(i) + 0.9, 0,
-    weatherable(new THREE.MeshStandardMaterial({ color: 0x35383f, roughness: 0.92, metalness: 0.02, side: THREE.DoubleSide }))));
+  // Asphalt. One tile is three metres, which is the scale at which the
+  // aggregate reads as stones instead of noise.
+  {
+    const mat = new THREE.MeshStandardMaterial({
+      map: S.asphalt,
+      roughnessMap: S.asphaltRough,
+      normalMap: S.asphaltNormal || null,
+      color: 0xffffff, roughness: 1.0, metalness: 0.02, side: THREE.DoubleSide,
+    });
+    if (S.asphaltNormal) mat.normalScale.set(0.85, 0.85);
+    group.add(ribbon((i) => -W(i) - 0.9, (i) => W(i) + 0.9, 0, weatherable(mat), 3.0));
+
+    // Forty-one metres per tile, multiplied over the three-metre aggregate.
+    // Two repeats that share no common factor never line up, so the surface
+    // stops marching away from you in squares down the straight.
+    if (quality.tier !== 'low') {
+      group.add(ribbon((i) => -W(i) - 0.9, (i) => W(i) + 0.9, 0.0015,
+        new THREE.MeshBasicMaterial({
+          map: S.asphaltMacro, blending: THREE.MultiplyBlending,
+          transparent: true, premultipliedAlpha: true, depthWrite: false, side: THREE.DoubleSide,
+        }), 41.0));
+    }
+  }
 
   // White lines.
   const white = new THREE.MeshStandardMaterial({ color: 0xe9edf2, roughness: 0.6, side: THREE.DoubleSide });
@@ -103,7 +136,51 @@ function buildTrackMesh(track, quality) {
   group.add(ribbon((i) => -W(i) - 0.12, (i) => -W(i) + 0.12, 0.012, white));
 
   // Kerbs, only where the circuit actually turns, on the inside of the corner.
-  buildKerbs(track, group, quality);
+  buildKerbs(track, group, quality, S);
+
+  // The starting grid. Twenty boxes staggered either side of the centreline,
+  // painted where the cars actually line up, so the formation on the grid is
+  // something you can see rather than something you take on trust.
+  {
+    const marks = [];
+    const quad = (i0, i1, o0, o1, lift) => {
+      const a = i0 * 3, b = i1 * 3;
+      const v = new Float32Array([
+        pos[a] + lat[a] * o0, pos[a + 1] + lift, pos[a + 2] + lat[a + 2] * o0,
+        pos[a] + lat[a] * o1, pos[a + 1] + lift, pos[a + 2] + lat[a + 2] * o1,
+        pos[b] + lat[b] * o0, pos[b + 1] + lift, pos[b + 2] + lat[b + 2] * o0,
+        pos[b] + lat[b] * o1, pos[b + 1] + lift, pos[b + 2] + lat[b + 2] * o1,
+      ]);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(v, 3));
+      g.setIndex([0, 2, 1, 1, 2, 3]);
+      g.computeVertexNormals();
+      marks.push(g);
+    };
+    // Where the engine actually puts them: just past the line, pole furthest
+    // up the road, eight metres a slot, staggered two-by-two about the
+    // centreline. The paint has to agree with the simulation or the cars sit
+    // in the wrong boxes on the one shot everybody looks at.
+    const at = (metres) => ((Math.round(metres / track.step) % n) + n) % n;
+    for (let k = 0; k < 20; k++) {
+      const gridPos = k + 1;
+      const ahead = (20 - gridPos) * 8;             // metres past the timing line
+      const side = gridPos % 2 === 1 ? -1 : 1;
+      const i0 = at(ahead - 0.2), i1 = at(ahead + 0.25);
+      quad(i0, i1, side * 0.9, side * 3.9, 0.014);  // the line you stop on
+      // The box's outer edge, running back from it.
+      const j0 = at(ahead - 4.8), j1 = at(ahead + 0.25);
+      quad(j0, j1, side * 3.72, side * 3.9, 0.014);
+    }
+    const g = mergeQuads(marks);
+    if (g) {
+      const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+        color: 0xf2f5f8, roughness: 0.55, side: THREE.DoubleSide,
+      }));
+      m.receiveShadow = !!quality.shadows;
+      group.add(m);
+    }
+  }
 
   // Start/finish line.
   const slab = new THREE.Mesh(
@@ -119,49 +196,136 @@ function buildTrackMesh(track, quality) {
   return group;
 }
 
-function buildKerbs(track, group, quality) {
+/**
+ * Kerbs and the astroturf behind them.
+ *
+ * This used to be one mesh per sample — several hundred draw calls on a fast
+ * circuit, each two triangles, each with its own material. Now every kerb on
+ * the lap is one buffer and one draw, with the red-and-white carried by a
+ * texture instead of by swapping materials, and a real four-point profile:
+ * flush at the white line, rising to a crest, falling away to the run-off.
+ * Riding it should look like riding something.
+ */
+/** Merge a handful of four-vertex quads into one buffer. */
+function mergeQuads(geoms) {
+  if (!geoms.length) return null;
+  const verts = new Float32Array(geoms.length * 12);
+  const idx = new Uint32Array(geoms.length * 6);
+  geoms.forEach((g, k) => {
+    verts.set(g.getAttribute('position').array, k * 12);
+    const gi = g.getIndex().array;
+    for (let q = 0; q < 6; q++) idx[k * 6 + q] = gi[q] + k * 4;
+    g.dispose();
+  });
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+  out.setIndex(new THREE.BufferAttribute(idx, 1));
+  out.computeVertexNormals();
+  return out;
+}
+
+function buildKerbs(track, group, quality, S) {
   const n = track.samples;
   const { pos, lat } = track._frame;
+
+  // Where the circuit actually turns, and which side is the inside.
   const segs = [];
   let run = null;
   for (let i = 0; i < n; i++) {
     const k = track.curv[i];
     if (Math.abs(k) > 1 / 320) {
-      const side = k > 0 ? -1 : 1;                 // inside of the corner
+      const side = k > 0 ? -1 : 1;
       if (run && run.side === side) run.end = i;
       else { if (run) segs.push(run); run = { start: i, end: i, side }; }
     } else if (run) { segs.push(run); run = null; }
   }
   if (run) segs.push(run);
 
-  const red = new THREE.MeshStandardMaterial({ color: 0xd8232f, roughness: 0.75, side: THREE.DoubleSide });
-  const pale = new THREE.MeshStandardMaterial({ color: 0xeef1f4, roughness: 0.75, side: THREE.DoubleSide });
-
-  for (const s of segs) {
-    if (s.end - s.start < 3) continue;
-    for (let i = s.start; i < s.end; i++) {
-      const o = (i % n) * 3;
-      const w = track.width[i % n];
-      const inner = s.side * (w + 0.12);
-      const outer = s.side * (w + 1.5);
-      const j = (i + 1) % n;
-      const oj = j * 3;
-      const wj = track.width[j];
-      const g = new THREE.BufferGeometry();
-      const v = new Float32Array([
-        pos[o] + lat[o] * inner, pos[o + 1] + 0.02, pos[o + 2] + lat[o + 2] * inner,
-        pos[o] + lat[o] * outer, pos[o + 1] + 0.09, pos[o + 2] + lat[o + 2] * outer,
-        pos[oj] + lat[oj] * (s.side * (wj + 0.12)), pos[oj + 1] + 0.02, pos[oj + 2] + lat[oj + 2] * (s.side * (wj + 0.12)),
-        pos[oj] + lat[oj] * (s.side * (wj + 1.5)), pos[oj + 1] + 0.09, pos[oj + 2] + lat[oj + 2] * (s.side * (wj + 1.5)),
-      ]);
-      g.setAttribute('position', new THREE.BufferAttribute(v, 3));
-      g.setIndex([0, 1, 2, 2, 1, 3]);
-      g.computeVertexNormals();
-      const mesh = new THREE.Mesh(g, (i - s.start) % 4 < 2 ? red : pale);
-      mesh.receiveShadow = !!quality.shadows;
-      group.add(mesh);
-    }
+  // Exit kerbs. A circuit does not only kerb the apex — the outside of the
+  // exit gets one too, because that is the other place a car puts a wheel.
+  // Taken from the back half of each corner, on the opposite side.
+  for (const seg of segs.slice()) {
+    const len = seg.end - seg.start;
+    if (len < 10) continue;
+    segs.push({ start: seg.start + Math.round(len * 0.45), end: seg.end + Math.round(len * 0.30), side: -seg.side });
   }
+
+  // Across the kerb: offset from the white line, height above the road, and
+  // where that lands in the texture.
+  const PROFILE = [
+    { off: 0.08, lift: 0.015, u: 0.02 },
+    { off: 0.60, lift: 0.085, u: 0.32 },
+    { off: 1.55, lift: 0.120, u: 0.94 },
+    { off: 1.95, lift: 0.020, u: 1.00 },
+  ];
+  const COLS = PROFILE.length;
+  const TILE_V = 2.6;                       // metres per red-and-white pair
+
+  const kv = [], ku = [], ki = [];
+  const tv = [], tu = [], ti = [];
+
+  const push = (verts, uvs, idx, rows, cols) => {
+    // Stitch a rows × cols grid that was just appended to `verts`.
+    const base = verts.length / 3 - rows * cols;
+    for (let r = 0; r < rows - 1; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        const a = base + r * cols + c, b = a + 1, d = a + cols, e = d + 1;
+        idx.push(a, d, b, b, d, e);
+      }
+    }
+  };
+
+  for (const seg of segs) {
+    const len = seg.end - seg.start;
+    if (len < 3) continue;
+    const rows = len + 1;
+
+    for (let r = 0; r <= len; r++) {
+      const i = (seg.start + r) % n;
+      const o = i * 3;
+      const w = track.width[i];
+      const v = ((seg.start + r) * track.step) / TILE_V;
+      for (const c of PROFILE) {
+        const off = seg.side * (w + c.off);
+        kv.push(pos[o] + lat[o] * off, pos[o + 1] + c.lift, pos[o + 2] + lat[o + 2] * off);
+        ku.push(c.u, v);
+      }
+    }
+    push(kv, ku, ki, rows, COLS);
+
+    // Astroturf: beyond the kerb, at run-off level, two and a bit metres of it.
+    for (let r = 0; r <= len; r++) {
+      const i = (seg.start + r) % n;
+      const o = i * 3;
+      const w = track.width[i];
+      const vv = ((seg.start + r) * track.step) / 2.5;
+      for (const [off, uu] of [[1.95, 0], [4.30, 0.94]]) {
+        const d = seg.side * (w + off);
+        tv.push(pos[o] + lat[o] * d, pos[o + 1] + 0.004, pos[o + 2] + lat[o + 2] * d);
+        tu.push(uu, vv);
+      }
+    }
+    push(tv, tu, ti, rows, 2);
+  }
+
+  const build = (verts, uvs, idx, mat) => {
+    if (!idx.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, mat);
+    m.receiveShadow = !!quality.shadows;
+    group.add(m);
+  };
+
+  build(kv, ku, ki, new THREE.MeshStandardMaterial({
+    map: S.kerb, color: 0xffffff, roughness: 0.68, side: THREE.DoubleSide,
+  }));
+  build(tv, tu, ti, new THREE.MeshStandardMaterial({
+    map: S.turf, color: 0xffffff, roughness: 1, side: THREE.DoubleSide,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -273,9 +437,16 @@ export function createRaceScene(canvas, track, opts = {}) {
     for (let i = 0; i < track.samples; i++) {
       span = Math.max(span, Math.hypot(track.x[i] - cx, track.z[i] - cz));
     }
+    // Same grass as the run-off ribbon, so the join between the two does not
+    // draw a line round the circuit.
+    // A far coarser tile out here: at this distance a seven-metre repeat
+    // minifies into moire, and nobody is close enough to want the detail.
+    const gt = surfaces(quality.tier).grass.clone();
+    gt.needsUpdate = true;
+    gt.repeat.set(span * 5 / 26, span * 5 / 26);
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(span * 5, span * 5),
-      new THREE.MeshStandardMaterial({ color: 0x2c4430, roughness: 1 }));
+      new THREE.MeshStandardMaterial({ map: gt, color: 0xa9bda4, roughness: 1 }));
     ground.rotation.x = -Math.PI / 2;
     ground.position.set(cx, track.y[0] - 0.9, cz);
     ground.receiveShadow = !!quality.shadows;

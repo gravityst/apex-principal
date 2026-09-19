@@ -8,6 +8,38 @@ Built on the physics of [APEX F1](https://github.com/gravityst/apex-f1), which t
 
 ---
 
+## Play it
+
+Open `index.html`. That is the whole install.
+
+To put it on the web, it deploys to **GitHub Pages** as-is — the repository *is*
+the site, because there is no build step:
+
+```bash
+# once, from the project folder
+gh repo create apex-principal --public --source=. --remote=origin --push
+gh api -X POST repos/:owner/apex-principal/pages -f build_type=workflow
+```
+
+or, without the `gh` CLI: create an empty public repo on github.com, then
+
+```bash
+git remote add origin https://github.com/<you>/apex-principal.git
+git push -u origin master
+```
+
+and in **Settings → Pages**, set *Source* to **GitHub Actions**. The workflow in
+`.github/workflows/pages.yml` publishes every push. The site lands at
+`https://<you>.github.io/apex-principal/`.
+
+### On a phone
+
+Open that URL, then **Share → Add to Home Screen**. It installs as a real app:
+its own icon, no browser chrome, portrait-locked, and — because `sw.js` caches
+the whole shell on first run — it opens with no signal at all.
+
+---
+
 ## The idea
 
 Most management games hide a single "car performance" number behind a row of stat bars. This one does not have that number.

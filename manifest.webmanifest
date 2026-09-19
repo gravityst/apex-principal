@@ -1,0 +1,53 @@
+{
+  "name": "APEX: Principal",
+  "short_name": "APEX",
+  "description": "A Formula-style team management simulator. Build the car, hire the people, spend the money, and call the race from the pit wall.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": [
+    "standalone",
+    "fullscreen"
+  ],
+  "orientation": "portrait",
+  "background_color": "#070a10",
+  "theme_color": "#070a10",
+  "categories": [
+    "games",
+    "sports",
+    "simulation"
+  ],
+  "icons": [
+    {
+      "src": "./icons/apex-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/apex-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/apex-1024.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/apex-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./icons/apex-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

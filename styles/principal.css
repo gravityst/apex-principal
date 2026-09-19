@@ -44,11 +44,25 @@ a { color: var(--accent-2); }
 .topbar {
   display: flex; align-items: center; gap: 18px;
   padding: 10px 18px;
+  /* Installed to a home screen the status bar is translucent and the page runs
+     under it. Pay the inset here and the sticky tab strip follows, because its
+     offset is measured from this bar rather than guessed. */
+  padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  padding-left: calc(18px + env(safe-area-inset-left, 0px));
+  padding-right: calc(18px + env(safe-area-inset-right, 0px));
   background: linear-gradient(180deg, var(--bg-2), #070b12);
   border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 40;
-  flex-wrap: wrap;
+  /* Never two rows: the tab strip sticks underneath and a wrapped bar eats the
+     screen. The team chip is the shock absorber. */
+  flex-wrap: nowrap;
 }
+.topbar > * { flex: 0 0 auto; }
+/* Stats state their own width and refuse to be squeezed; only the chip gives. */
+.topbar .stat { flex: 0 0 auto; width: max-content; }
+.topbar .stat .k, .topbar .stat .v { white-space: nowrap; }
+.topbar .teamchip { flex: 1 1 auto; min-width: 42px; overflow: hidden; }
+.topbar .teamchip b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .brand { display: flex; align-items: baseline; gap: 8px; margin-right: 4px; }
 .brand b { font-size: 17px; letter-spacing: 0.08em; }
 .brand span { font-size: 11px; color: var(--ink-3); letter-spacing: 0.22em; text-transform: uppercase; }
@@ -61,14 +75,17 @@ a { color: var(--accent-2); }
 .teamchip .dot { width: 11px; height: 11px; border-radius: 3px; background: var(--team); }
 .teamchip b { font-size: 13px; }
 
-.stat { display: flex; flex-direction: column; line-height: 1.15; }
-.stat .k { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
-.stat .v { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.stat .v.neg { color: var(--bad); }
-.stat .v.pos { color: var(--good); }
+/* Deliberately block, not a column flexbox: Chrome measures a nested column
+   flex container's intrinsic width short, which squeezed the balance to half
+   its text in the top bar. A block shrink-wraps its content honestly. */
+.stat { display: block; line-height: 1.15; }
+.stat .k { display: block; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+.stat .v { display: block; font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.stat .v.down { color: var(--bad); }
+.stat .v.up { color: var(--good); }
 .spacer { flex: 1; }
 
-.nav { display: flex; gap: 2px; padding: 0 12px; background: var(--bg-2); border-bottom: 1px solid var(--line); overflow-x: auto; position: sticky; top: 53px; z-index: 39; }
+.nav { display: flex; gap: 2px; padding: 0 12px; background: var(--bg-2); border-bottom: 1px solid var(--line); overflow-x: auto; position: sticky; top: var(--barh, 53px); z-index: 39; }
 .nav button {
   background: none; border: 0; padding: 11px 15px; color: var(--ink-3);
   font-size: 13px; font-weight: 600; letter-spacing: 0.02em; white-space: nowrap;
@@ -137,7 +154,8 @@ tr.me td { background: rgba(255, 138, 0, .07); }
 td.r, th.r { text-align: right; }
 td.c, th.c { text-align: center; }
 
-.pos { font-family: var(--mono); font-weight: 700; color: var(--ink-2); width: 28px; }
+/* A results-table position cell. Deliberately narrow — do not reuse the name. */
+td.pos { font-family: var(--mono); font-weight: 700; color: var(--ink-2); width: 28px; }
 .bar-team { display: inline-block; width: 3px; height: 15px; border-radius: 2px; vertical-align: -3px; margin-right: 8px; }
 
 /* ---------- meters ---------- */
@@ -289,7 +307,6 @@ td.c, th.c { text-align: center; }
   main { padding: 14px; }
   .g2, .g3 { grid-template-columns: minmax(0, 1fr); }
   .topbar { gap: 12px; padding: 9px 14px; }
-  .nav { top: 49px; }
   .hero h2 { font-size: 21px; }
   .arearow { grid-template-columns: 78px 1fr 54px; }
 }
@@ -682,6 +699,7 @@ body.racing main { max-width: none; padding: 0; }
 .dock {
   display: flex; align-items: center; gap: 13px; flex-wrap: wrap;
   padding: 8px 14px; background: var(--bg-2); border-top: 1px solid var(--line);
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
 }
 .dgrp { display: flex; align-items: center; gap: 5px; }
 .dlbl { font-size: 8.5px; font-weight: 800; letter-spacing: .14em; color: var(--ink-3); margin-right: 2px; }
@@ -867,16 +885,28 @@ body.racing main { max-width: none; padding: 0; }
 
 @media (max-width: 760px) {
   /* The chrome above the game earns its height or it goes. */
-  .topbar { gap: 9px; padding: 7px 12px; }
+  /* One row, always. A wrapped top bar cost 40px of track and pushed the tab
+     strip under itself. The team chip is the only thing allowed to shrink. */
+  .topbar { gap: 10px; padding: 7px 12px; flex-wrap: nowrap; row-gap: 0; }
+  .topbar { padding-top: calc(7px + env(safe-area-inset-top, 0px)); }
+  .brand { margin-right: 0; flex: 0 0 auto; }
   .brand span { display: none; }
   .brand b { font-size: 15px; }
-  .teamchip { padding: 4px 10px 4px 7px; }
-  .teamchip b { font-size: 12px; max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .topbar .stat .k { font-size: 8.5px; letter-spacing: .1em; }
-  .topbar .stat .v { font-size: 13px; }
-  .topbar { row-gap: 4px; }
+  .teamchip { padding: 4px 9px 4px 7px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
+  .teamchip b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .teamchip .dot { flex: 0 0 auto; }
+
+  /* Values only. "$66.0M" and "R1/10" say what they are without a caption. */
+  .topbar .stat { flex: 0 0 auto; }
+  .topbar .stat .k { display: none; }
+  .topbar .stat .v { font-size: 13.5px; }
+  .topbar .stat.s-balance .v { font-size: 15px; }
+  .topbar .stat.s-round .v::before { content: 'R'; opacity: .45; margin-right: 1px; }
+  .topbar .stat.s-season .v::before { content: 'S'; opacity: .45; margin-right: 1px; }
+  .topbar .spacer { display: none; }
+  .topbar .btn.sm { flex: 0 0 auto; }
+
   .nav button { padding: 9px 12px; font-size: 12.5px; }
-  .nav { top: 0; position: sticky; }
   main { padding: 12px; }
 
   /* Race day: nothing above the stage but the brand and the way out. */
@@ -903,12 +933,19 @@ body.racing main { max-width: none; padding: 0; }
 }
 
 @media (max-width: 480px) {
-  .topbar .stat:nth-of-type(n+4) { display: none; }
+  /* Drop the stats a principal can read on another tab, never the one he
+     plays against. Balance stays at every width. */
+  .topbar .stat.s-champ, .topbar .stat.s-car { display: none; }
   .hero h2 { font-size: 19px; }
   .panel { padding: 13px; }
   .offer { padding: 11px; }
   .modal { padding: 17px; border-radius: 12px; }
   .teampick { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 370px) {
+  .topbar .stat.s-season { display: none; }
+  .topbar { gap: 8px; }
 }
 
 .tierbadge { white-space: nowrap; }
@@ -1014,9 +1051,17 @@ body.racing main { max-width: none; padding: 0; }
 @media (max-width: 1080px) { .ov.radiolive { width: 286px; top: 262px; } }
 @media (max-width: 860px) { .ov.radiolive { width: 236px; top: 220px; } .lrt { font-size: 11.5px; } }
 @media (max-width: 640px) {
-  .ov.radiolive { left: 10px; right: 10px; width: auto; top: 92px; }
+  /* Radio must never cost you the view of the car. Two messages, two lines
+     each, three quarters of the width, hard against the left edge. */
+  .ov.radiolive { left: 10px; right: auto; width: min(74%, 320px); top: 88px; }
   .lrm:nth-child(n+3) { display: none; }
-  .lrt { font-size: 12px; }
+  .lrm { padding: 6px 9px; background: rgba(10,16,25,.72); }
+  .lrt {
+    font-size: 11.5px; line-height: 1.32;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .lrh { margin-bottom: 1px; }
 }
 
 /* ---- the paint shop ---- */

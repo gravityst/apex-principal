@@ -223,3 +223,49 @@ One move at a time, per car: without that gate a car already committed to a pass
 - Lap distance is normalised `u ∈ [0, 1)` in the race engine, metres in the solver.
 - Every module is side-effect free at import time except `principal.js`.
 - No `console.log` in a hot path.
+
+## Surfaces (`src/race3d/textures.js`)
+
+Every texture in the game is drawn into a canvas at load. Nothing is
+downloaded, so the project stays a folder of text files and still starts with
+no network. Three rules govern all of them:
+
+- **They tile.** Anything drawn near an edge is drawn again on the opposite
+  edge (`wrapped()`), so no seam ever runs down the middle of a straight.
+- **They are deterministic.** One seeded xorshift per surface, so a circuit
+  looks the same every visit.
+- **They are quiet at large scale.** The single hardest problem here was the
+  asphalt announcing its own repeat: a three-metre tile with any large-scale
+  contrast in it marches away from you down the straight in visible squares.
+  The fix is two layers whose periods share no factor — a three-metre
+  aggregate tile carrying the stones, and a forty-one-metre macro tile,
+  multiplied over it, carrying the resurfacing joins and the patch repairs.
+
+The asphalt gets a normal map (a Sobel over its own luminance, about three
+milliseconds at load) and a roughness map derived the same way, because it is
+the only surface a camera ever sits two metres above. Phones skip the normal
+map.
+
+### UVs in metres
+
+`ribbon()` takes a `tile` in metres and lays UVs out in metres rather than
+0..1 across. Without this a texture stretches wherever the circuit widens and
+smears through every corner. `mergeSimple()` carries the `uv` attribute
+through a merge — it used to drop it silently, which produced perfectly lit
+sheets of flat colour and no error anywhere.
+
+### Kerbs
+
+`buildKerbs()` used to add one mesh per sample: several hundred draw calls on
+a fast circuit, two triangles each, alternating between a red material and a
+white one. It is now one buffer and one draw for the whole lap, with the
+colours carried by the texture, plus a second buffer for the astroturf behind
+them. The profile has four points across — flush at the white line, rising to
+a crest, falling away to the run-off — so riding one looks like riding
+something. Exit kerbs are generated from the back half of each corner on the
+opposite side, because a circuit does not only kerb the apex.
+
+### The rubbered line
+
+Feathered at both edges by the texture's alpha, and thinned unevenly along the
+lap. A hard-edged dark band down the middle of the road reads as paint.

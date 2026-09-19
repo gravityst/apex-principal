@@ -69,11 +69,11 @@ app.render = () => {
     h('div', { class: 'brand' }, h('b', {}, 'APEX'), h('span', {}, 'Principal')),
     h('div', { class: 'teamchip' },
       h('i', { class: 'dot', style: { background: team.colors.primary } }), h('b', {}, team.name)),
-    st('Season', String(state.season)),
-    st('Round', round ? `${round.round}/${state.calendar.length}` : 'complete'),
-    st('Constructors', `${ordinal(pos)} · ${table[pos - 1].points}`),
-    st('Balance', money(state.player.balance), state.player.balance < 0 ? 'neg' : 'pos'),
-    st('Car', specRating(team.spec).toFixed(1)),
+    st('Balance', money(state.player.balance), state.player.balance < 0 ? 'down' : 'up', 'balance'),
+    st('Round', round ? `${round.round}/${state.calendar.length}` : 'complete', '', 'round'),
+    st('Season', String(state.season), '', 'season'),
+    st('Constructors', `${ordinal(pos)} · ${table[pos - 1].points}`, '', 'champ'),
+    st('Car', specRating(team.spec).toFixed(1), '', 'car'),
     h('div', { class: 'spacer' }),
     h('button', { class: 'btn sm', onClick: openMenu }, 'Menu'));
 
@@ -86,6 +86,7 @@ app.render = () => {
 
   const main = h('main', {});
   mount(rootEl, bar, nav, main);
+  measureBar(bar);
 
   const screens = {
     hub: renderHub, weekend: renderWeekend, factory: renderFactory, car: renderCar,
@@ -95,8 +96,27 @@ app.render = () => {
   (screens[app.tab] || renderHub)(app, main);
 };
 
-function st(k, v, cls = '') {
-  return h('div', { class: 'stat' }, h('span', { class: 'k' }, k), h('span', { class: `v ${cls}` }, v));
+// The tab strip sticks below the top bar, and the top bar's height depends on
+// the phone, the notch and how much wrapped. Measuring beats guessing: every
+// hard-coded offset here was wrong on some screen.
+let barObserver = null;
+function measureBar(bar) {
+  const set = () => document.documentElement.style.setProperty(
+    '--barh', `${Math.round(bar.getBoundingClientRect().height)}px`);
+  set();
+  if (barObserver) barObserver.disconnect();
+  if (typeof ResizeObserver === 'function') {
+    barObserver = new ResizeObserver(set);
+    barObserver.observe(bar);
+  }
+}
+
+// Each stat carries what it IS, not where it sits, so a narrow screen can drop
+// the least useful one rather than whichever happens to be fourth. Balance is
+// the number a principal actually plays against, so it leads and never goes.
+function st(k, v, cls = '', id = '') {
+  return h('div', { class: `stat${id ? ` s-${id}` : ''}` },
+    h('span', { class: 'k' }, k), h('span', { class: `v ${cls}` }, v));
 }
 
 // ---------------------------------------------------------------------------
