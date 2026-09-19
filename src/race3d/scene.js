@@ -16,6 +16,7 @@
 
 import * as THREE from '../../vendor/three/build/three.module.js';
 import { createCarModel } from './carModel.js';
+import { buildSky, buildWorld, createPuffs } from './world.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -194,18 +195,23 @@ export function createRaceScene(canvas, track, opts = {}) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.18;
+  renderer.toneMappingExposure = 1.34;
   renderer.shadowMap.enabled = quality.shadows;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0f18);
-  scene.fog = new THREE.Fog(0x0a0f18, 320, 1400);
+  // Fog matched to the sky's horizon, so distance fades into the sky rather
+  // than into a flat colour that cuts the world off.
+  scene.fog = new THREE.Fog(0x9fb8cf, 480, 2100);
 
-  // Lighting: a broad sky term plus one sun that casts the car shadows.
-  const hemi = new THREE.HemisphereLight(0xcfe2f5, 0x33392c, 1.85);
+  // Lighting: a broad sky term plus one sun that casts the car shadows, and a
+  // cool fill from the opposite side so the bodywork is never a silhouette.
+  const hemi = new THREE.HemisphereLight(0xdcecfb, 0x3d4434, 2.15);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff3e0, 2.2);
+  const fill = new THREE.DirectionalLight(0x9fc4f0, 0.55);
+  fill.position.set(-160, 120, -200);
+  scene.add(fill);
+  const sun = new THREE.DirectionalLight(0xfff1d8, 2.9);
   sun.position.set(180, 260, 120);
   if (quality.shadows) {
     sun.castShadow = true;
@@ -222,6 +228,15 @@ export function createRaceScene(canvas, track, opts = {}) {
   const circuit = buildTrackMesh(track, quality);
   scene.add(circuit);
 
+  /** The line a car takes if nobody is in the way. Mirrors the race engine. */
+  function racingLineAt(u) {
+    const f = ((u % 1) + 1) % 1;
+    const i = Math.min(track.samples - 1, Math.floor(f * track.samples));
+    const k = track.curv[i], w = track.width[i];
+    return Math.max(-w * 0.55, Math.min(w * 0.55,
+      -Math.sign(k) * Math.min(w * 0.45, Math.abs(k) * 2600)));
+  }
+
   // Ground. Without it the world simply stops at the edge of the run-off and
   // the cars appear to be racing over a void.
   {
@@ -232,22 +247,45 @@ export function createRaceScene(canvas, track, opts = {}) {
       span = Math.max(span, Math.hypot(track.x[i] - cx, track.z[i] - cz));
     }
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(span * 4, span * 4),
-      new THREE.MeshStandardMaterial({ color: 0x1d2a20, roughness: 1 }));
+      new THREE.PlaneGeometry(span * 5, span * 5),
+      new THREE.MeshStandardMaterial({ color: 0x2c4430, roughness: 1 }));
     ground.rotation.x = -Math.PI / 2;
     ground.position.set(cx, track.y[0] - 0.9, cz);
     ground.receiveShadow = !!quality.shadows;
     scene.add(ground);
+
+    const sky = buildSky(new THREE.Vector3(cx, track.y[0], cz));
+    scene.add(sky.mesh);
+    scene._sky = sky;
   }
+
+  // Barriers, hoardings, gravel, grandstands, trees and the gantry.
+  scene.add(buildWorld(track, { quality, racingLine: racingLineAt }));
+
+  // Smoke and dust, for the moments something goes wrong.
+  const puffs = createPuffs(scene, quality.tier === 'low' ? 40 : 96);
 
   // ---- cameras ----------------------------------------------------------
   const camA = new THREE.PerspectiveCamera(46, 1, 1, 3000);
   const camB = new THREE.PerspectiveCamera(46, 1, 1, 3000);
+
+  /**
+   * Keep the HORIZONTAL field of view fixed and let the vertical one follow the
+   * pane. A split pane is nearly four times wider than it is tall; holding the
+   * vertical angle instead would bend the world at the edges.
+   */
+  const HFOV = 64 * Math.PI / 180;
+  function setAspect(cam, aspect) {
+    cam.aspect = aspect;
+    const v = 2 * Math.atan(Math.tan(HFOV / 2) / Math.max(0.6, aspect)) * 180 / Math.PI;
+    cam.fov = Math.max(20, Math.min(52, v));
+    cam.updateProjectionMatrix();
+  }
   const state = {
     mode: 'top',            // 'top' | 'split'
-    zoom: 80,               // metres above the car
+    zoom: 48,               // slant distance from the car, in metres
+    tilt: 0.22,             // 0 = broadcast chase, 1 = straight down
     targets: [null, null],
-    orient: 'across',       // 'across' uses a wide panel properly; 'along' is portrait
     timeScale: 1,           // the camera has to turn as fast as the car does
     follow: [new THREE.Vector3(), new THREE.Vector3()],
     heading: [0, 0],
@@ -268,8 +306,8 @@ export function createRaceScene(canvas, track, opts = {}) {
     let marker = null;
     if (entry.isPlayer) {
       marker = new THREE.Mesh(
-        new THREE.RingGeometry(2.9, 3.5, 40),
-        new THREE.MeshBasicMaterial({ color: 0xff8a00, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
+        new THREE.RingGeometry(2.25, 2.62, 40),
+        new THREE.MeshBasicMaterial({ color: 0xff8a00, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false }));
       marker.rotation.x = -Math.PI / 2;
       marker.renderOrder = 2;
       scene.add(marker);
@@ -358,11 +396,12 @@ export function createRaceScene(canvas, track, opts = {}) {
       span -= Math.round(span);
       rec.smoothU = ((from + span * a) % 1 + 1) % 1;
 
-      if (rec.smoothLat == null) rec.smoothLat = targetLat;
-
-      // Moving across the track is a manoeuvre, not a teleport.
-      const prevLat = rec.smoothLat;
-      rec.smoothLat += (targetLat - rec.smoothLat) * Math.min(1, rd * 2.0);
+      // Lateral is interpolated the same way as distance: the engine moves the
+      // car across the track at a real rate, and the renderer draws the frames
+      // in between.
+      const prevLat = rec.smoothLat == null ? targetLat : rec.smoothLat;
+      const fromLat = d.prevLateral ?? targetLat;
+      rec.smoothLat = fromLat + (targetLat - fromLat) * a;
 
       const heading = placeAt(rec.smoothU, rec.smoothLat, _v);
       // A car changing line yaws into it slightly.
@@ -416,24 +455,31 @@ export function createRaceScene(canvas, track, opts = {}) {
     // to follow fifteen times harder or the circuit swings around underneath it.
     state.heading[slot] += dh * Math.min(1, dt * (2.2 + state.timeScale * 1.6));
 
-    const h = state.zoom;
-    // A touch behind and above, looking down: close enough to read the car,
-    // high enough to see who is next to it.
-    const back = h * 0.30;
-    cam.position.set(
-      f.x - Math.sin(state.heading[slot]) * back,
-      f.y + h,
-      f.z - Math.cos(state.heading[slot]) * back);
+    // One control, two views. `tilt` sweeps the camera from a broadcast chase
+    // — low, behind, the road running away to the horizon — to the tactical
+    // overhead you want when you are counting places rather than watching.
+    const d = state.zoom;
+    const pitch = 0.220 + state.tilt * 1.25;         // 13° … 84° above horizontal
+    const back = Math.cos(pitch) * d;
+    const up = Math.sin(pitch) * d;
+    const sh = Math.sin(state.heading[slot]);
+    const ch = Math.cos(state.heading[slot]);
+    cam.position.set(f.x - sh * back, f.y + up, f.z - ch * back);
     cam.up.set(0, 1, 0);
-    cam.lookAt(f.x, f.y + 0.4, f.z);
-    // The panel is far wider than it is tall, so the track is turned to run
-    // ACROSS the screen rather than up it: the car sits left of centre and the
-    // road ahead uses the width instead of wasting it on run-off.
-    if (state.orient === 'across') cam.rotateZ(-Math.PI / 2);
+    // Aim down the road rather than at the car, so the car sits low in frame
+    // and what you are looking at is where he is going.
+    const lead = d * 0.06 * (1 - state.tilt);
+    cam.lookAt(f.x + sh * lead, f.y + 1.0 - state.tilt * 0.6, f.z + ch * lead);
+    // Frame the car in the lower third rather than dead centre: the road ahead
+    // is what you are reading, and the pit wall decks live along the bottom.
+    // Expressed as a fraction of the lens, or a split pane's long lens would
+    // swing the car clean out of shot.
+    const halfV = (cam.fov * Math.PI / 180) / 2;
+    cam.rotateX(-halfV * 0.30 * (1 - state.tilt));
     sun.target.position.copy(f);
     sun.position.set(f.x + 120, f.y + 210, f.z + 90);
     if (sun.castShadow) {
-      const d = Math.max(60, state.zoom * 1.1);
+      const d = Math.max(55, state.zoom * 1.25);
       if (Math.abs(sun.shadow.camera.right - d) > 8) {
         sun.shadow.camera.left = -d; sun.shadow.camera.right = d;
         sun.shadow.camera.top = d; sun.shadow.camera.bottom = -d;
@@ -452,8 +498,8 @@ export function createRaceScene(canvas, track, opts = {}) {
   function screenPositions() {
     const out = [];
     const panes = state.mode === 'split'
-      ? [{ cam: camB, y0: 0, h: 0.5 }, { cam: camA, y0: 0.5, h: 0.5 }]
-      : [{ cam: camA, y0: 0, h: 1 }];
+      ? [{ cam: camA, x0: 0, w: 0.5 }, { cam: camB, x0: 0.5, w: 0.5 }]
+      : [{ cam: camA, x0: 0, w: 1 }];
     for (let pi = 0; pi < panes.length; pi++) {
       const pane = panes[pi];
       for (const rec of cars.values()) {
@@ -469,10 +515,9 @@ export function createRaceScene(canvas, track, opts = {}) {
           id: rec.id,
           pane: pi,
           isPlayer: rec.isPlayer,
-          x: nx,
-          // Map into the pane's slice of the canvas. Pane 0 is the LOWER half
-          // of the framebuffer, which is the BOTTOM of the element.
-          y: (1 - pane.y0 - pane.h) + ny * pane.h,
+          // Map into the pane's slice of the canvas: pane 0 is the left half.
+          x: pane.x0 + nx * pane.w,
+          y: ny,
           dist: rec.pos.distanceTo(pane.cam.position),
         });
       }
@@ -491,25 +536,27 @@ export function createRaceScene(canvas, track, opts = {}) {
   }
 
   function render(dt) {
+    puffs.update(dt, state.mode === 'split' ? camB : camA);
     if (state.mode === 'split') {
-      const half = Math.floor(H / 2);
+      // Side by side, not stacked. A stacked pane on a wide panel is four times
+      // wider than it is tall, which no camera can frame; half the width each
+      // gives both drivers a shot you can actually read.
+      const half = Math.floor(W / 2);
       renderer.setScissorTest(true);
       const slots = [
-        { cam: camA, target: state.targets[0], y: half, h: H - half },
-        { cam: camB, target: state.targets[1], y: 0, h: half },
+        { cam: camA, target: state.targets[0], x: 0, w: half },
+        { cam: camB, target: state.targets[1], x: half, w: W - half },
       ];
       for (let s = 0; s < 2; s++) {
         const sl = slots[s];
-        sl.cam.aspect = W / Math.max(1, sl.h);
-        sl.cam.updateProjectionMatrix();
-        renderer.setViewport(0, sl.y, W, sl.h);
-        renderer.setScissor(0, sl.y, W, sl.h);
+        setAspect(sl.cam, sl.w / Math.max(1, H));
+        renderer.setViewport(sl.x, 0, sl.w, H);
+        renderer.setScissor(sl.x, 0, sl.w, H);
         if (aimCamera(sl.cam, sl.target, s, dt)) renderer.render(scene, sl.cam);
       }
       renderer.setScissorTest(false);
     } else {
-      camA.aspect = W / H;
-      camA.updateProjectionMatrix();
+      setAspect(camA, W / H);
       renderer.setViewport(0, 0, W, H);
       if (aimCamera(camA, state.targets[0], 0, dt)) renderer.render(scene, camA);
     }
@@ -517,11 +564,16 @@ export function createRaceScene(canvas, track, opts = {}) {
 
   function setWeather(w) {
     const wet = w?.wetness ?? 0;
-    hemi.intensity = 1.55 - wet * 0.55;
-    sun.intensity = 2.2 - wet * 1.5;
-    scene.background.setHex(wet > 0.4 ? 0x141a22 : 0x0a0f18);
-    scene.fog.color.copy(scene.background);
-    scene.fog.far = 1400 - wet * 700;
+    hemi.intensity = 2.15 - wet * 0.75;
+    sun.intensity = 2.9 - wet * 2.2;
+    fill.intensity = 0.55 + wet * 0.35;
+    const sky = scene._sky;
+    if (sky) {
+      sky.uniforms.uTop.value.setHex(wet > 0.4 ? 0x33414f : 0x2a4f86).lerp(new THREE.Color(0x36404b), wet * 0.6);
+      sky.uniforms.uHorizon.value.setHex(wet > 0.4 ? 0x6f7b88 : 0x9fb8cf);
+    }
+    scene.fog.color.setHex(wet > 0.4 ? 0x6f7b88 : 0x9fb8cf);
+    scene.fog.far = 2100 - wet * 1100;
     for (const rec of cars.values()) rec.model.setRainLight(wet > 0.25);
   }
 
@@ -535,6 +587,7 @@ export function createRaceScene(canvas, track, opts = {}) {
       if (o.geometry) o.geometry.dispose();
       if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
     });
+    puffs.dispose();
     renderer.dispose();
   }
 
@@ -542,10 +595,16 @@ export function createRaceScene(canvas, track, opts = {}) {
   return {
     scene, renderer, state, cars,
     addCars, updateCars, render, resize, setWeather, dispose, screenPositions,
+    /** Kick up smoke or dust at a car's current position. */
+    puff(id, kind = 'smoke', count = 4) {
+      const rec = cars.get(id);
+      if (rec && rec.model.group.visible) puffs.emit(rec.pos.x, rec.pos.y, rec.pos.z, kind, count);
+    },
     setMode: (m) => { state.mode = m; },
     setTargets: (a, b) => { state.targets[0] = a; state.targets[1] = b; },
-    setZoom: (z) => { state.zoom = Math.max(18, Math.min(420, z)); },
-    setOrient: (o) => { state.orient = o; },
+    setZoom: (z) => { state.zoom = Math.max(14, Math.min(420, z)); },
+    setTilt: (t) => { state.tilt = Math.max(0, Math.min(1, t)); },
+    getTilt: () => state.tilt,
     setTimeScale: (t) => { state.timeScale = Math.max(1, t || 1); },
     getZoom: () => state.zoom,
     quality,

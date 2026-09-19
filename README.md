@@ -40,22 +40,36 @@ The factory screen shows you exactly what each department is worth, in seconds a
 
 ## The race
 
-The cars are the real APEX F1 models — the same procedural chassis, wings, halo, wheels and liveries the driving game renders, ported unchanged. The world around them is extruded from the same centreline the lap solver integrates, so what you watch is geometrically the thing being simulated.
+The cars are the real APEX F1 models — the same procedural chassis, wings, halo, wheels and liveries the driving game renders, ported unchanged. The world around them is extruded from the same centreline the lap solver integrates, so what you watch is geometrically the thing being simulated: kerbs on the corners, gravel on the outside of the quick ones, barriers and hoardings, grandstands, trees, a start gantry and a rubbered-in racing line.
 
-The camera is a close top-down chase that zooms from about twenty metres to four hundred, on a scroll wheel or a pinch. Follow either of your drivers, follow the leader, or switch to **Both cars** and run a split screen with one camera per driver. Every car on screen carries a tag: position, driver code, compound and tyre age — so the view is something you read, not just something you look at.
+**The 3D is the screen.** It fills the window. Over it sit only the things you act on — the lap, the flags, your engineer when he has something urgent, a timing window showing the leader and the cars either side of each of yours, and one deck per driver with three buttons on it. The full field, the strategy numbers and the radio are behind three tabs that stay shut until you want them.
+
+Three views, because they are three different jobs:
+
+| | |
+|---|---|
+| **Chase** | low and behind, the road running away to the horizon — for a fight |
+| **Broadcast** | the elevated tracking shot — for a stint |
+| **Tactical** | overhead — for counting places |
+
+Zoom on a scroll wheel or a pinch. Follow either driver, follow the leader, or pick **Both** and run a split screen — side by side, one camera each. Every car carries a tag: position, driver code, compound and tyre age, so the view is something you read rather than just something you look at.
 
 The simulation advances in quarter-second steps, but the renderer interpolates *between* them, so the cars move at constant velocity on screen rather than teleporting fourteen metres at a time. Measured over 1,500 frames, the frame-to-frame change in a car's speed has a median of 0.00% and a 99th percentile of 0.05%.
 
+Overtakes happen the same way. A move is a manoeuvre with a side, a closing rate and two to four seconds to complete it, so the cars go wheel to wheel and the place changes while both are moving. When it does not come off, he draws alongside and has to concede. And when somebody locks a wheel, runs through the gravel or spins it, you see the smoke.
+
 ## Two cars, one of you
 
-Hand-flying both cars is too much, so each one has a **Engineer / You** switch on its pit wall card:
+Hand-flying both cars is too much, so each one has an **Engineer / You** switch on its deck:
 
 - **Engineer** — his own race engineer runs the strategy: stops, compounds, pace, fuel saving. He announces every call on the radio before he makes it, so you can disagree in time.
 - **You** — nothing happens to that car unless you say so.
 
 Either way every button stays live. Press one on an engineer-run car and your call is executed immediately and stands for three laps before he takes it back. By default your better-placed car is yours and the other runs itself.
 
-## What the pit wall shows
+Each deck has three buttons — **BOX**, **PUSH**, **DEPLOY** — sized to be hit without looking. BOX calls him in on the compound his engineer would fit; the chevron beside it opens the rest, and with it the full pace and energy options.
+
+## What the deck shows
 
 Per car, live: **speed** in km/h taken from the solved speed profile at the car's actual point on the circuit, **ERS charge** (deploying drains it, harvesting rebuilds it, and running it flat forces you back to balanced), **DRS**, the gap ahead and behind with driver codes, last and best lap, and all three **sector times** — live for the sector in progress, coloured against that driver's own best.
 
@@ -126,6 +140,7 @@ The simulation is pure and dependency-free, so it runs headless under node:
 node tools/probe.mjs            # lap solver against each circuit's lap record
 node tools/simrace.mjs 0 7      # one race weekend, fully simulated
 node tools/simseason.mjs 6 42   # six seasons, for balance
+node tools/fxcheck.mjs          # how often the race asks the view for smoke
 ```
 
 `tools/probe.mjs` is the one worth looking at first — it prints what each development department is worth at each circuit, which is the whole design in one table.

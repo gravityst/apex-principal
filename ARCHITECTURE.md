@@ -83,6 +83,10 @@ Positions come from `distance`, except for cars that have taken the flag: they h
 
 Overtaking is resolved once per pass through a DRS zone, not per tick, and only when the attacker is genuinely faster. A cooldown stops a pair re-litigating the same move every second.
 
+A resolved move is not a swap. It opens a `duel` on the attacker — a side, a closing rate and a duration of two to four seconds — and the extra speed is added to his `u` over that window, eased in with a sine so the pass happens while both cars are moving. A failed attempt gets the same treatment with the easing taken out and back, so he draws alongside and has to concede. The car being attacked sets `defending`, which moves *his* line the other way. Before this the engine wrote `c.distance = ahead.distance + 14` and the attacker teleported into the lead, which is exactly what it looked like.
+
+`rollMistake()` also pushes onto `race.fx`, a queue of visual effects — locked wheels, gravel, a spin, the barrier, a pit release. The simulation does not know whether anything is drawing, so the queue is capped and a headless run simply ignores it.
+
 ## The 3D view
 
 `src/race3d/carModel.js` is APEX F1's own `src/render/carModel.js`, unchanged apart from three rewritten import paths — bare specifiers (`three`, `three/addons/...`) became relative ones so the game needs no import map and no loader.
@@ -92,12 +96,29 @@ Overtaking is resolved once per pass through a DRS zone, not per tick, and only 
 Three details worth knowing:
 
 - **Winding.** The extruded ribbons wind clockwise seen from above. Front-face culling hid the entire circuit while the cars floated over nothing — every track material is `DoubleSide`.
-- **Orientation.** The panel is far wider than it is tall, so the camera rolls 90° (`state.orient === 'across'`): the track runs across the screen and the width shows road ahead instead of run-off. The camera's turn rate scales with the time compression, or at 15× the circuit swings around underneath a view that cannot keep up.
+- **One camera, one dial.** `state.tilt` sweeps a single camera from a broadcast chase — low, behind, the road running to the horizon — to the tactical overhead you want when you are counting places. Pitch, look-ahead and the framing offset are all derived from it; the three buttons in the dock are presets, not separate cameras. The camera's turn rate scales with the time compression, or at 15× the circuit swings around underneath a view that cannot keep up.
+- **Lens from aspect.** The *horizontal* field of view is held at 64° and the vertical one is derived from the pane. A split pane is nearly four times wider than it is tall; holding the vertical angle instead bends the world at the edges. The framing offset is a fraction of the lens rather than a fixed angle, or a long lens swings the car clean out of shot.
+- **Split is side by side.** Stacked panes on a wide panel give each driver a strip no camera can frame. Half the width each gives both a shot you can read.
 - **Interpolation, not chasing.** The simulation steps 0.25 s at a time — fourteen metres. Drawing those steps raw stutters; springing onto the newest one just turns the teleport into a lurch, because the error is a sawtooth the spring can never catch. `race.step()` records each car's `prevU` first, and the renderer draws at `lerp(prevU, u, alpha)` where `alpha` is how far the frame sits into the pending step. Frame-to-frame speed change went from a 162% 95th percentile to 0.02%. A jump over ~110 m (pit entry, recovery) resets `prevU` so the car is never interpolated sideways across the circuit.
 
 Car state is synthesised, not simulated. A management game does not compute suspension travel, so wheel spin comes from speed, steer and body roll from local curvature, and compression from lateral load. Plausible beats absent.
 
-`screenPositions()` projects each car into the active viewport so the DOM can hang a tag over it. In split view the same car appears in both panes, so the label pool is keyed by `id#pane` — keyed by id alone, the two panes fought over one element and the lower one lost.
+`screenPositions()` projects each car into the active viewport so the DOM can hang a tag over it. In split view the same car appears in both panes, so the label pool is keyed by `id#pane` — keyed by id alone, the two panes fought over one element and one of them lost.
+
+`world.js` builds what is around the circuit: a gradient sky dome, the rubbered-in racing line, hoardings and barriers both sides, gravel on the outside of the fast corners, stepped grandstands with roofs, instanced trees and the start gantry — plus `createPuffs()`, an instanced particle pool the race screen drives from `race.fx`.
+
+## The race screen
+
+`src/ui/racescreen.js`. The stage is the page: `body.racing` strips the main column's padding and width cap, and the screen measures what the chrome above it leaves and takes the rest.
+
+Only what you act on is drawn over the 3D — the lap block, flags, one engineer call when it is urgent, a timing *window* (the leader plus the cars either side of each of yours, with a gap drawn where the order skips), and one deck per driver carrying his speed, energy, gaps, sectors and three buttons. Everything else — the full field, the strategy numbers, the radio — is behind three tabs in a sheet that is closed until you open it.
+
+Two details that are not obvious:
+
+- **The sheet takes what is left, not a fixed slice.** The decks are *overlaid* on the stage, so a sheet sized as a percentage of the window does not merely crop the 3D — past a point the decks are taller than what remains and they bury it. `sizeSheet()` reserves the decks' measured height plus a working 3D window and gives the sheet the remainder.
+- **The tower is budgeted the same way.** It asks how many rows fit above the decks and narrows from ±2 cars to ±1 to ±0, and finally to just your two. A tower that runs off the bottom of the screen is worse than a short one.
+
+Panels repaint five times a second, labels fourteen, the 3D every frame.
 
 ## Where the design decisions live
 
