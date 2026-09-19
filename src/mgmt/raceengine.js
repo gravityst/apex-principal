@@ -317,7 +317,7 @@ export function createWeekend(opts) {
     t -= (c.tow ?? 0) * 0.022 * c.model.perGripLoss;
 
     if (!c.isPlayer) t += fieldHandicap;
-    if (race.safetyCar) t *= race.safetyCar.kind === 'sc' ? 1.62 : 1.34;
+    if (race.safetyCar) t *= race.safetyCar.kind === 'sc' ? 1.40 : 1.37;
     return t;
   }
   race.currentLapTime = currentLapTime;
@@ -478,10 +478,26 @@ export function createWeekend(opts) {
 
   // ---- qualifying --------------------------------------------------------
 
+  /**
+   * Some cars are quick over one lap and ordinary over a stint, and some are
+   * the other way round — a low-drag qualifying special that eats its tyres, a
+   * heavy car that comes to itself when the fuel burns off. Without this the
+   * grid is a perfect map of race pace and Sunday has nothing left to say.
+   *
+   * Stable per team and per season, not random per lap.
+   */
+  function oneLapTrim(team) {
+    const id = `${team.id}`;
+    let hsh = 2166136261;
+    for (let i = 0; i < id.length; i++) { hsh ^= id.charCodeAt(i); hsh = Math.imul(hsh, 16777619); }
+    const u = ((hsh >>> 0) % 1000) / 1000;                // 0..1, fixed for a team
+    return (u - 0.5) * 0.34;                              // ±0.17s over one lap
+  }
+
   function qualiLap(c, pressure) {
     const grip = tyreGrip(weather.wetness > 0.2 ? (weather.wetness > 0.55 ? 'wet' : 'inter') : 'soft', 0.06, weather.wetness);
     const pace = driverPace(c.driver, { mode: 'push', wet: weather.wetness, dirtyAir: 0 });
-    let t = c.model.at(8, grip) / Math.max(0.9, pace);
+    let t = c.model.at(8, grip) / Math.max(0.9, pace) - oneLapTrim(c.team);
     // A qualifying lap is one lap: consistency matters more here than anywhere.
     t += Math.abs(rng.normal(0, 0.09 + (1 - (c.driver.consistency ?? 0.88)) * 0.62));
     // And it can simply go wrong.
@@ -547,6 +563,11 @@ export function createWeekend(opts) {
       // those two columns until the launch has been paid out — which is what
       // lets a good getaway stream past the car in front instead of queueing
       // behind it.
+      // Not every engineer calls a stop at the same moment. A spread of a few
+      // laps across the field is where undercuts, overcuts and the whole point
+      // of a pit call come from — without it everyone stops together and the
+      // order that comes out is the order that went in.
+      c.pitBias = rng.normal(0, 0.075);
       c._gridSide = c.gridPos % 2 === 1 ? -1 : 1;
       c.lateral = c._gridSide * 2.4;
       c._launch = 0;
@@ -639,19 +660,30 @@ export function createWeekend(opts) {
   }
   race.retire = retire;
 
+  /**
+   * A safety car and a virtual safety car are not the same length of event and
+   * they are not even measured in the same units.
+   *
+   * A VSC is a delta-time procedure to clear something small. It is over in
+   * well under a lap — half a minute to a minute and a bit — so it is counted
+   * in seconds. Counting it in laps made a VSC last five laps, which is not a
+   * thing that happens.
+   *
+   * A full safety car is counted in laps because that is how race control
+   * counts it: a lap to gather the field, a lap or two while the marshals work,
+   * then "safety car in this lap". Three, usually.
+   */
   function deploySafetyCar(kind, why) {
     if (race.safetyCar) return;
-    race.safetyCar = { kind, lapsLeft: kind === 'sc' ? rng.int(3, 5) : rng.int(2, 3), why };
+    race.safetyCar = kind === 'sc'
+      ? { kind, lapsLeft: rng.int(2, 4), why, warned: false }
+      : { kind, secsLeft: rng.range(28, 78), why, warned: false };
     say(kind === 'sc'
       ? `Safety car deployed — ${why}.`
-      : `Virtual safety car — ${why}.`, { kind: 'flag' });
-    if (kind === 'sc') {
-      // Bunch the field up behind the leader.
-      const order = updateOrder().filter((c) => c.status === 'running');
-      for (let i = 0; i < order.length; i++) {
-        order[i].distance = order[0].distance - i * 22;
-      }
-    }
+      : `Virtual safety car — ${why}. Delta positive, everybody.`, { kind: 'flag' });
+    // The field closes up over the following lap rather than being teleported
+    // into a queue: `distance` is recomputed from `u` every step, so writing it
+    // here did nothing at all. The gradual pull is in `step()`.
   }
   race.deploySafetyCar = deploySafetyCar;
 
@@ -884,8 +916,11 @@ export function createWeekend(opts) {
     if (!rng.chance(p * dtLaps)) return;
     c.limitStrikes = (c.limitStrikes || 0) + 1;
     if (c.limitStrikes === 3) {
+      say(`Black-and-white flag for ${c.driver.name} — third track-limits warning. One more and it is a penalty.`,
+        { kind: 'penalty', car: c.id, player: c.isPlayer });
+    } else if (c.limitStrikes === 4) {
       c.penalty += 5;
-      say(`${c.driver.name} has a third track-limits warning — five-second penalty, to be served at his stop.`,
+      say(`${c.driver.name} has a fourth track-limits warning — five-second penalty, to be served at his stop.`,
         { kind: 'penalty', car: c.id, player: c.isPlayer });
     } else if (c.isPlayer) {
       say(`Warning for track limits, ${c.driver.short || c.driver.name.split(' ').pop()}. That is ${c.limitStrikes} of three.`,
@@ -1366,7 +1401,7 @@ export function createWeekend(opts) {
     if (wet < 0.10 && onWets && c.lap > 2) { c.pitRequested = 'medium'; return; }
 
     // Otherwise: stop when the tyre is done, a bit earlier under a safety car.
-    const threshold = race.safetyCar ? 0.52 : 0.86;
+    const threshold = (race.safetyCar ? 0.52 : 0.86) + (c.pitBias || 0);
     if (c.wear > threshold && lapsLeft > 6) {
       const opts = sensibleCompounds(wet).filter((x) => !WET_COMPOUNDS.includes(x) || wet > 0.15);
       // Fit something that can reach the flag. A tyre that needs another stop
@@ -1758,6 +1793,19 @@ export function createWeekend(opts) {
 
     enforceSpacing();
 
+    // A virtual safety car is over in seconds, so it is counted in them.
+    if (race.safetyCar && race.safetyCar.secsLeft != null) {
+      race.safetyCar.secsLeft -= dt;
+      if (race.safetyCar.secsLeft <= 6 && !race.safetyCar.warned) {
+        race.safetyCar.warned = true;
+        say('Virtual safety car ending — get ready to go again.', { kind: 'flag' });
+      }
+      if (race.safetyCar.secsLeft <= 0) {
+        race.safetyCar = null;
+        say('Green flag, green flag. We are racing.', { kind: 'flag' });
+      }
+    }
+
     // Under the safety car the field closes up. Without this a race neutralised
     // on lap 8 stayed exactly as spread out as it was, which is the one thing
     // a safety car never does.
@@ -1779,11 +1827,15 @@ export function createWeekend(opts) {
     const newLap = leader ? leader.lap : race.lap;
     if (newLap !== race.lap) {
       race.lap = newLap;
-      if (race.safetyCar) {
+      if (race.safetyCar && race.safetyCar.lapsLeft != null) {
         race.safetyCar.lapsLeft--;
+        if (race.safetyCar.lapsLeft === 1 && !race.safetyCar.warned) {
+          race.safetyCar.warned = true;
+          say('Safety car in this lap. Get the tyres and the brakes ready.', { kind: 'flag' });
+        }
         if (race.safetyCar.lapsLeft <= 0) {
-          say(race.safetyCar.kind === 'sc' ? 'Safety car in this lap — we go racing again.' : 'Virtual safety car ending.', { kind: 'flag' });
           race.safetyCar = null;
+          say('Green flag, green flag. We are racing.', { kind: 'flag' });
         }
       }
     }

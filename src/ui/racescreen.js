@@ -624,8 +624,12 @@ export function renderRaceScreen(app, root, race, round) {
 
     const flags = [];
     if (race.safetyCar) {
-      flags.push(h('div', { class: `flagbar ${race.safetyCar.kind}` },
-        race.safetyCar.kind === 'sc' ? 'SAFETY CAR' : 'VIRTUAL SAFETY CAR'));
+      const sc = race.safetyCar;
+      const tail = sc.lapsLeft != null
+        ? (sc.lapsLeft <= 1 ? ' — IN THIS LAP' : `  ·  ${sc.lapsLeft} LAPS`)
+        : (sc.secsLeft != null && sc.secsLeft <= 10 ? ' — ENDING' : `  ·  ${Math.max(0, Math.ceil(sc.secsLeft || 0))}s`);
+      flags.push(h('div', { class: `flagbar ${sc.kind}` },
+        (sc.kind === 'sc' ? 'SAFETY CAR' : 'VIRTUAL SAFETY CAR') + tail));
     }
     if (race.weather.wetness > 0.14) {
       flags.push(h('div', { class: 'flagbar rain' },

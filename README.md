@@ -38,7 +38,7 @@ The factory screen shows you exactly what each department is worth, in seconds a
 
 **Change your mind about a driver** — at any point in the season, not just over the winter. Ending a contract early costs what is left of it; getting the next man in costs a fee, or a buyout if he is already in somebody's car. Their team will replace him and will not thank you. Rival teams do the same thing to each other, and the paddock talks about all of it in the news.
 
-**On Sunday** — practice, a three-segment qualifying, and then a live race you watch in 3D. Four decisions per car: when to stop, what to fit, how hard to drive, and how to use the energy store. Time runs at 1×, 2×, 5× or 15×, or you can simulate the rest instantly.
+**On Sunday** — practice, a three-segment qualifying, and then a live race you watch in 3D. A grand prix is a grand prix: about 305 kilometres, which is 55 to 68 laps depending on the circuit and around ninety minutes of race time. If that is more than you want on a weeknight, the menu will run it at three quarters or half distance — a shorter race, not a faster one, and the strategy changes with it. Four decisions per car: when to stop, what to fit, how hard to drive, and how to use the energy store. Time runs at 1×, 2×, 5× or 15×, or you can simulate the rest instantly.
 
 ## The race
 
@@ -186,6 +186,17 @@ Measured over 24 simulated races, grid position predicts finishing position with
 ## What the race costs to draw
 
 Twenty cars at full detail is about six hundred draw calls a frame and no phone will hold that, so detail is spent where it can be seen. Cars near the camera get the real model; the ones down the road get the cheap one; a quarter of a mile away they are not drawn at all, and on a small machine only the cars actually in the fight are drawn while the timing tower speaks for the rest. Four cars cast a real shadow and every car gets an instanced contact shadow, which is one draw call for all twenty. If the frame still slips, the renderer takes something away — shadows first, then resolution — and puts it back when it can. Draw calls came down from 270–470 to 70–190.
+
+## Getting the small things right
+
+A virtual safety car is a delta-time procedure to clear something small, and it
+is over in well under a lap — so it is counted in seconds, not laps, and lasts
+between half a minute and a minute and a bit. A full safety car is counted in
+laps, because that is how race control counts it: a lap to gather the field, a
+lap or two while the marshals work, then "safety car in this lap". Three,
+usually. Under either, the field is about forty percent off the pace rather than
+sixty. Track limits get a black-and-white flag on the third warning and five
+seconds on the fourth.
 
 ## On a phone
 

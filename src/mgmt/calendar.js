@@ -31,12 +31,13 @@ const ROUNDS = [
 export const POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 export const FASTEST_LAP_POINT = 1;
 
-/** Race distance is capped so a full season stays playable. */
+/**
+ * A grand prix distance, as the circuit defines it — about 305 kilometres. The
+ * player's `distance` setting scales it at the weekend (see `raceLapsFor`), so
+ * the calendar itself is always the real thing.
+ */
 function raceLaps(circuit) {
-  // The APEX circuits carry a full grand-prix distance; keep roughly 60% of it
-  // so a race resolves in a few minutes at speed without losing the shape of a
-  // two-stop strategy.
-  return Math.max(24, Math.round(circuit.laps * 0.62));
+  return Math.max(18, circuit.laps);
 }
 
 export function buildCalendar() {

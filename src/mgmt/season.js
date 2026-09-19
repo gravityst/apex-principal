@@ -85,6 +85,19 @@ export function runRoundDevelopment(state, allocationWeights) {
 // The race weekend
 // ---------------------------------------------------------------------------
 
+/** What a grand prix is: the real distance, or a shorter one if you want. */
+export const DISTANCES = {
+  full: { id: 'full', name: 'Full', factor: 1, blurb: 'about 305km, the real thing' },
+  short: { id: 'short', name: 'Three quarters', factor: 0.75, blurb: 'the shape of a race, in less time' },
+  sprint: { id: 'sprint', name: 'Half', factor: 0.5, blurb: 'a sprint — one stop at most' },
+};
+
+export function raceLapsFor(state, round) {
+  const d = DISTANCES[state.settings?.distance] || DISTANCES.full;
+  const full = round.circuit.laps || round.laps;
+  return Math.max(18, Math.round(full * d.factor));
+}
+
 export function buildWeekend(state, round) {
   const track = getTrack(round.circuit);
   const rng = roundRng(state, 'race');
@@ -97,8 +110,11 @@ export function buildWeekend(state, round) {
       });
     }
   }
+  // The calendar stores a distance; the setting decides what is actually run,
+  // so changing it takes effect at the next session rather than the next career.
+  const laps = raceLapsFor(state, round);
   const race = createWeekend({
-    track, round, entries, rng,
+    track, round: { ...round, laps }, entries, rng,
     autoStrategy: state.settings.autoStrategy,
     difficulty: state.settings.difficulty || 'normal',
   });

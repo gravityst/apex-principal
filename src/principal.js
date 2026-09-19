@@ -15,7 +15,7 @@ import {
   newGame, saveGame, loadGame, hasSave, clearSave, exportSave, importSave,
   playerTeam, constructorsTable, constructorsPosition, isDismissed,
 } from './mgmt/state.js';
-import { endSeason, seasonComplete, currentRound, autoSignSponsors } from './mgmt/season.js';
+import { endSeason, seasonComplete, currentRound, autoSignSponsors, DISTANCES } from './mgmt/season.js';
 import { specRating } from './mgmt/carspec.js';
 import { TEAMS } from './data/teams.js';
 import { doctrineName } from './mgmt/rivals.js';
@@ -219,6 +219,20 @@ function openMenu() {
           app.save(); close(); openMenu();
         },
       }, name)))),
+
+    h('div', { style: { padding: '12px 0 4px' } },
+      h('b', {}, 'Race distance'),
+      h('div', { class: 'tiny dim', style: { margin: '3px 0 9px' } },
+        'A grand prix is about 305 kilometres. Anything less is a shorter race, not a faster one — the strategy changes with it.'),
+      h('div', { class: 'btnrow' }, Object.values(DISTANCES).map((d) => h('button', {
+        class: `btn sm ${(state.settings.distance || 'full') === d.id ? 'on' : ''}`,
+        title: d.blurb,
+        onClick: () => {
+          state.settings.distance = d.id;
+          app.weekend = null;
+          app.save(); close(); openMenu();
+        },
+      }, d.name)))),
 
     h('h3', { style: { marginTop: '18px' } }, 'About'),
     h('p', { class: 'small muted' },
