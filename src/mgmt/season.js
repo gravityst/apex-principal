@@ -17,6 +17,7 @@ import { POINTS, FASTEST_LAP_POINT, PRIZE_MONEY } from './calendar.js';
 import { createWeekend } from './raceengine.js';
 import { runDevelopment, allocateByWeights, developmentAdvice } from './rnd.js';
 import { developRival, rivalBudget, rivalOffseason } from './rivals.js';
+import { midSeasonPaddock } from './market.js';
 import {
   applyResultToDriver, decayDriverState, generateDriver, driverSalary,
 } from './personnel.js';
@@ -180,6 +181,10 @@ export function applyRaceResults(state, race) {
 
   for (const t of state.teams) for (const d of t.drivers) decayDriverState(d);
 
+  // The paddock between races: a seat changing hands, and the talk about the
+  // ones that might.
+  midSeasonPaddock(state, rng);
+
   state.round++;
   state.rngState = rng.state();
   return results;
@@ -326,7 +331,7 @@ function runDriverMarket(state, rng) {
 
   // A couple of swaps between rival teams each winter, driven by who wants a
   // better seat and who has a seat to fill.
-  const swaps = rng.int(0, 2);
+  const swaps = rng.int(1, 3);
   for (let k = 0; k < swaps; k++) {
     const a = rng.pick(state.teams.filter((t) => t.id !== state.playerTeamId));
     const b = rng.pick(state.teams.filter((t) => t.id !== state.playerTeamId && t.id !== a.id));
@@ -336,7 +341,8 @@ function runDriverMarket(state, rng) {
     if (!da || !db) continue;
     if ((da.contractYears ?? 0) > 0 && (db.contractYears ?? 0) > 0) continue;
     a.drivers[ia] = db; b.drivers[ib] = da;
-    moves.push(`${db.name} joins ${a.name}; ${da.name} moves to ${b.name}.`);
+    moves.push(`${db.name} signs for ${a.name}.`);
+    moves.push(`${da.name} signs for ${b.name}.`);
   }
 
   return moves;

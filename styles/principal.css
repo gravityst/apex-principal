@@ -852,3 +852,64 @@ body.racing main { max-width: none; padding: 0; }
   .tbar { flex: 0 0 72px; height: 7px; }
   .dtyre .tn { font-size: 10px; }
 }
+
+/* =========================================================================
+   PORTRAIT — a phone held upright
+   ========================================================================= */
+
+.dcycle { display: none; }
+.dcycle .ck {
+  font-size: 8px; letter-spacing: .16em; font-weight: 800;
+  color: var(--ink-3); margin-right: 6px;
+}
+.dcycle b { font-weight: 800; }
+.dcycle.on, .dbtn.dcycle { color: var(--ink); }
+
+@media (max-width: 760px) {
+  /* The chrome above the game earns its height or it goes. */
+  .topbar { gap: 9px; padding: 7px 12px; }
+  .brand span { display: none; }
+  .brand b { font-size: 15px; }
+  .teamchip { padding: 4px 10px 4px 7px; }
+  .teamchip b { font-size: 12px; max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar .stat .k { font-size: 8.5px; letter-spacing: .1em; }
+  .topbar .stat .v { font-size: 13px; }
+  .topbar { row-gap: 4px; }
+  .nav button { padding: 9px 12px; font-size: 12.5px; }
+  .nav { top: 0; position: sticky; }
+  main { padding: 12px; }
+
+  /* Race day: nothing above the stage but the brand and the way out. */
+  body.racing .topbar .stat,
+  body.racing .topbar .teamchip { display: none; }
+  body.racing .topbar { padding: 6px 12px; }
+
+  /* One cycling button each instead of six. */
+  .dock .dbtn.dfull, .dock .dlbl { display: none; }
+  .dock .dcycle { display: inline-flex; align-items: baseline; }
+  .dock .zoomgrp { display: none; }
+  .dock { gap: 7px 8px; padding: 7px 10px; }
+  .dock .spacer { display: none; }
+  .dock .dgrp { gap: 4px; }
+  .dbtn { padding: 7px 10px; font-size: 12.5px; }
+  .tabbtn { padding: 8px 10px; font-size: 12.5px; flex: 1 1 0; text-align: center; }
+  .dock .tabs { flex: 1 1 100%; gap: 6px; order: 9; }
+  .dock .dbtn.sim { order: 8; }
+
+  /* A flag is the one thing that must not be missed, so on a narrow screen it
+     is a banner across the top rather than a chip fighting the lap counter. */
+  .ov.flags { left: 10px; right: 10px; top: 54px; transform: none; align-items: stretch; }
+  .ov.flags .flagbar { padding: 7px 10px; font-size: 12px; }
+}
+
+@media (max-width: 480px) {
+  .topbar .stat:nth-of-type(n+4) { display: none; }
+  .hero h2 { font-size: 19px; }
+  .panel { padding: 13px; }
+  .offer { padding: 11px; }
+  .modal { padding: 17px; border-radius: 12px; }
+  .teampick { grid-template-columns: minmax(0, 1fr); }
+}
+
+.tierbadge { white-space: nowrap; }
+.offer .hd { flex-wrap: wrap; row-gap: 4px; }

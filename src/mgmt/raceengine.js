@@ -642,7 +642,8 @@ export function createWeekend(opts) {
     let target;
 
     if (c.status === 'pit') {
-      target = (pit.side === 'right' ? 1 : -1) * (w + 9);
+      // Down the pit lane, where the pit lane actually is.
+      target = (pit.side === 'right' ? 1 : -1) * (pit.laneOffset ?? 15);
     } else if (c.duel) {
       // Alongside: far enough over to be a second car abreast, and eased in
       // and out so the move reads as a move.
@@ -663,7 +664,8 @@ export function createWeekend(opts) {
         target += side * Math.min(w * 0.30, 1.5) * Math.min(1, (c.dirtyAir - 0.3) * 2.2);
       }
     }
-    target = Math.max(-w + 1.1, Math.min(w - 1.1, target));
+    // Keep him on the road — except in the pit lane, which is not on it.
+    if (c.status !== 'pit') target = Math.max(-w + 1.1, Math.min(w - 1.1, target));
 
     // How fast a car can change line is a function of how fast it is going: a
     // fixed rate either slides at 60km/h or cannot make the turn-in at 280.

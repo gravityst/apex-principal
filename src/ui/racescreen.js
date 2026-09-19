@@ -92,7 +92,7 @@ export function renderRaceScreen(app, root, race, round) {
         speedBtns[s] = b; return b;
       })),
     camWrap, viewWrap,
-    h('div', { class: 'dgrp' }, h('span', { class: 'dlbl' }, 'ZOOM'),
+    h('div', { class: 'dgrp zoomgrp' }, h('span', { class: 'dlbl' }, 'ZOOM'),
       h('button', { class: 'dbtn', onClick: () => setZoom(sceneZoom() * 1.35) }, '−'),
       h('button', { class: 'dbtn', onClick: () => setZoom(sceneZoom() / 1.35) }, '+')),
     h('div', { class: 'spacer' }),
@@ -198,33 +198,52 @@ export function renderRaceScreen(app, root, race, round) {
   // ---- camera -----------------------------------------------------------
   let followId = app.camFollow || mine[0]?.id || race.cars[0].id;
 
+  /** On a phone there is no room for six camera buttons, so one cycles. */
+  function camOptions() {
+    const opts = mine.map((c) => ({ id: c.id, name: short(c.driver) }));
+    opts.push({ id: '__leader', name: 'Leader' });
+    if (mine.length > 1) opts.push({ id: '__split', name: 'Both' });
+    return opts;
+  }
+  function pickCam(id) {
+    if (id === '__split') {
+      app.camMode = 'split';
+      scene?.setMode('split');
+      scene?.setTargets(mine[0].id, mine[1].id);
+    } else {
+      app.camMode = 'top';
+      followId = app.camFollow = id;
+      scene?.setMode('top');
+      if (id !== '__leader') scene?.setTargets(id, null);
+    }
+    paintCams();
+  }
+  function currentCam() {
+    return app.camMode === 'split' ? '__split' : followId;
+  }
+
   function paintCams() {
-    const chips = [h('span', { class: 'dlbl' }, 'CAMERA')];
+    const opts = camOptions();
+    const cur = currentCam();
+    const idx = Math.max(0, opts.findIndex((o) => o.id === cur));
+    const cycle = h('button', {
+      class: 'dbtn dcycle', onClick: () => pickCam(opts[(idx + 1) % opts.length].id),
+    }, h('span', { class: 'ck' }, 'CAM'), h('b', {}, opts[idx].name));
+    const chips = [h('span', { class: 'dlbl' }, 'CAMERA'), cycle];
     for (const c of mine) {
       chips.push(h('button', {
-        class: `dbtn ${app.camMode !== 'split' && followId === c.id ? 'on' : ''}`,
-        onClick: () => {
-          app.camMode = 'top'; followId = app.camFollow = c.id;
-          scene?.setMode('top'); scene?.setTargets(c.id, null); paintCams();
-        },
+        class: `dbtn dfull ${app.camMode !== 'split' && followId === c.id ? 'on' : ''}`,
+        onClick: () => pickCam(c.id),
       }, short(c.driver)));
     }
     chips.push(h('button', {
-      class: `dbtn ${app.camMode !== 'split' && followId === '__leader' ? 'on' : ''}`,
-      onClick: () => {
-        app.camMode = 'top'; followId = app.camFollow = '__leader';
-        scene?.setMode('top'); paintCams();
-      },
+      class: `dbtn dfull ${app.camMode !== 'split' && followId === '__leader' ? 'on' : ''}`,
+      onClick: () => pickCam('__leader'),
     }, 'Leader'));
     if (mine.length > 1) {
       chips.push(h('button', {
-        class: `dbtn ${app.camMode === 'split' ? 'on' : ''}`,
-        onClick: () => {
-          app.camMode = 'split';
-          scene?.setMode('split');
-          scene?.setTargets(mine[0].id, mine[1].id);
-          paintCams();
-        },
+        class: `dbtn dfull ${app.camMode === 'split' ? 'on' : ''}`,
+        onClick: () => pickCam('__split'),
       }, 'Both'));
     }
     splitLabels.style.display = app.camMode === 'split' ? '' : 'none';
@@ -241,17 +260,23 @@ export function renderRaceScreen(app, root, race, round) {
     }
   }
 
+  function pickView(v) {
+    app.camView = v.id;
+    app.camTilt = v.tilt;
+    scene?.setTilt(v.tilt);
+    setZoom(v.zoom);
+    paintViews();
+  }
   function paintViews() {
-    viewWrap.replaceChildren(h('span', { class: 'dlbl' }, 'VIEW'),
+    const i = Math.max(0, VIEWS.findIndex((v) => v.id === app.camView));
+    viewWrap.replaceChildren(
+      h('span', { class: 'dlbl' }, 'VIEW'),
+      h('button', {
+        class: 'dbtn dcycle', onClick: () => pickView(VIEWS[(i + 1) % VIEWS.length]),
+      }, h('span', { class: 'ck' }, 'VIEW'), h('b', {}, VIEWS[i].name)),
       ...VIEWS.map((v) => h('button', {
-        class: `dbtn ${app.camView === v.id ? 'on' : ''}`,
-        onClick: () => {
-          app.camView = v.id;
-          app.camTilt = v.tilt;
-          scene?.setTilt(v.tilt);
-          setZoom(v.zoom);
-          paintViews();
-        },
+        class: `dbtn dfull ${app.camView === v.id ? 'on' : ''}`,
+        onClick: () => pickView(v),
       }, v.name)));
   }
 
@@ -377,7 +402,13 @@ export function renderRaceScreen(app, root, race, round) {
     const floor = 1 - (ovBottom.offsetHeight + 6) / H;
     const wall = 1 - (ovTower.offsetWidth + 24) / W;
 
-    shots.sort((a, b) => (b.isPlayer ? 1 : 0) - (a.isPlayer ? 1 : 0));
+    // Nearest first, and yours always. A tag is a fixed number of PIXELS wide,
+    // so the spacing that keeps them apart has to be in pixels too — as a
+    // fraction of the viewport it let them pile up on a narrow screen.
+    shots.sort((a, b) => (b.isPlayer ? 1 : 0) - (a.isPlayer ? 1 : 0) || a.dist - b.dist);
+    const minX = 92 / W, minY = 30 / H;
+    const maxRivals = W < 520 ? 4 : W < 900 ? 8 : 20;
+    let rivals = 0;
     const placed = [];
     for (const s of shots) {
       const car = byId.get(s.id);
@@ -386,11 +417,13 @@ export function renderRaceScreen(app, root, race, round) {
       if (s.y > floor || s.y < 0.10) continue;
       if (s.x > wall && s.y < 0.62) continue;
       if (!s.isPlayer) {
+        if (rivals >= maxRivals) continue;
         let clash = false;
         for (const q of placed) {
-          if (Math.abs(q.x - s.x) < 0.055 && Math.abs(q.y - s.y) < 0.06) { clash = true; break; }
+          if (Math.abs(q.x - s.x) < minX && Math.abs(q.y - s.y) < minY) { clash = true; break; }
         }
         if (clash) continue;
+        rivals++;
       }
       placed.push(s);
       const key = `${s.id}#${s.pane ?? 0}`;

@@ -36,6 +36,7 @@ The dependency arrow only ever points `ui → mgmt → data`. No module in `mgmt
 | `state.js` | The save object, money helpers, persistence. |
 | `strategy.js` | Tyre outlook, pit cost, rejoin projection, undercut maths, the push trade-off, and the engineer's proactive calls. |
 | | Also in `raceengine.js`: per-car `strategyMode` (`auto` = his own engineer, `manual` = you), `overrideUntilLap` so any command you give holds the engineer off for three laps, an ERS store, interpolated sector splits, and `currentSpeed()` read from the solved profile. |
+| `market.js` | The driver market: pay-offs, signing fees, buyouts, and the paddock's own moves between races. Reads nothing about the player's results when a rival changes driver. |
 | `season.js` | Round and season progression; the headless entry points. |
 
 ## The lap solver
@@ -119,6 +120,16 @@ Two details that are not obvious:
 - **The tower is budgeted the same way.** It asks how many rows fit above the decks and narrows from ±2 cars to ±1 to ±0, and finally to just your two. A tower that runs off the bottom of the screen is worse than a short one.
 
 Panels repaint five times a second, labels fourteen, the 3D every frame.
+
+A car tag is a fixed number of *pixels* wide, so the spacing that keeps two of them apart is in pixels too. Expressed as a fraction of the viewport — which is what it was — they piled on top of each other as soon as the viewport got narrow.
+
+### Held upright
+
+A phone in portrait is the hard case, and it is handled by taking things away rather than shrinking them. During a race the top bar drops to the name and the way out; the timing tower goes; one deck shows at a time and the others swipe across; and the six camera buttons and three view buttons collapse to one button each that cycles. What is left is the 3D, one deck and eleven controls.
+
+### Position is not progress
+
+`raceengine.js` advances a car by `dt / lapTime`, which is a fraction of the lap's **time**. `phaseMap()` in `laptime.js` inverts the solved speed profile once and maps that onto a fraction of the lap's **length**, and everything the circuit's geometry owns goes through it: where the car is drawn, the DRS zones, the pit entry, the sector lines. Without it a car covers a hairpin at the same metres per second as the main straight, which is what made the cars look like they were on rails. One map serves the whole field — built per car, the profiles disagree by a tenth of a percent, and a tenth of a percent of a lap is six metres.
 
 ## Where the design decisions live
 

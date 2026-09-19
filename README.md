@@ -36,6 +36,8 @@ The factory screen shows you exactly what each department is worth, in seconds a
 
 **Hire** — a technical director lifts every department a little. A chief aerodynamicist lifts two of them a lot. And your two drivers each have skill, consistency, aggression, wet-weather ability, a temperament and a morale.
 
+**Change your mind about a driver** — at any point in the season, not just over the winter. Ending a contract early costs what is left of it; getting the next man in costs a fee, or a buyout if he is already in somebody's car. Their team will replace him and will not thank you. Rival teams do the same thing to each other, and the paddock talks about all of it in the news.
+
 **On Sunday** — practice, a three-segment qualifying, and then a live race you watch in 3D. Four decisions per car: when to stop, what to fit, how hard to drive, and how to use the energy store. Time runs at 1×, 2×, 5× or 15×, or you can simulate the rest instantly.
 
 ## The race
@@ -120,6 +122,10 @@ What keeps a championship close over the years is not rubber-banding. It is the 
 - the regulations periodically throw part of the work away.
 
 Measured over 24 simulated races, grid position predicts finishing position with r ≈ 0.82, pole converts to a win about half the time, and there are roughly 2 retirements and 0.4 accidents a race — numbers that sit where a real championship sits.
+
+## On a phone
+
+Held upright. The 3D takes the screen, the chrome above it shrinks to the name and the way out, the timing tower steps aside, one driver's deck at a time swipes across, and the camera and view controls collapse to a button each that cycles. Pinch to zoom.
 
 ## Running it
 

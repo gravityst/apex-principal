@@ -67,6 +67,18 @@ export function buildSky(centre) {
  * @param track   from mgmt/track.js, already carrying `_frame`
  * @param opts    { quality, racingLine(u) -> metres }
  */
+/** A box spanning a to b, `h` tall and `d` deep, lifted to sit on the ground. */
+function boxBetween(a, b, h, d, lift) {
+  const dx = b.x - a.x, dz = b.z - a.z;
+  const len = Math.max(0.6, Math.hypot(dx, dz));
+  const g = new THREE.BoxGeometry(len, h, d);
+  const m = new THREE.Matrix4();
+  m.makeRotationY(Math.atan2(dx, dz) - Math.PI / 2);
+  m.setPosition((a.x + b.x) / 2, (a.y + b.y) / 2 + lift, (a.z + b.z) / 2);
+  g.applyMatrix4(m);
+  return g;
+}
+
 export function buildWorld(track, opts) {
   const { pos, lat } = track._frame;
   const n = track.samples;
@@ -103,6 +115,75 @@ export function buildWorld(track, opts) {
     group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
       color: 0x22242a, roughness: 0.78, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
     })));
+  }
+
+  // ---- the pit lane --------------------------------------------------------
+  // A car serving a stop used to be drawn on the grass beside the track, doing
+  // eighty. It is a lane, a wall and a row of garages, built from the same
+  // centreline as everything else, between the entry and the exit.
+  {
+    const pit = track.circuit && track.circuit.pit;
+    if (pit) {
+      const side = pit.side === 'right' ? 1 : -1;
+      const off = (pit.laneOffset ?? 15) * side;
+      const HALF = 6.0;                                // lane half-width
+      const i0 = Math.round(pit.entry * n);
+      const span = Math.round((((pit.exit - pit.entry) % 1 + 1) % 1) * n);
+      const steps = Math.max(8, span);
+
+      // How far out the lane sits: it peels off the track and rejoins it, so
+      // the ends taper rather than starting in mid-air.
+      const outAt = (t) => {
+        const ease = Math.min(1, Math.min(t, 1 - t) * 6);
+        return off * ease + (track.width[(i0 + Math.round(t * steps)) % n] + 2) * side * (1 - ease);
+      };
+
+      const verts = new Float32Array((steps + 1) * 6);
+      const idx = new Uint32Array(steps * 6);
+      for (let k = 0; k <= steps; k++) {
+        const i = (i0 + k) % n;
+        const c = outAt(k / steps);
+        const a = P(i, c - HALF, 0.012), b = P(i, c + HALF, 0.012);
+        verts.set([a.x, a.y, a.z, b.x, b.y, b.z], k * 6);
+        if (k < steps) {
+          const j = k * 6;
+          idx[j] = k * 2; idx[j + 1] = (k + 1) * 2; idx[j + 2] = k * 2 + 1;
+          idx[j + 3] = (k + 1) * 2; idx[j + 4] = (k + 1) * 2 + 1; idx[j + 5] = k * 2 + 1;
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+      g.setIndex(new THREE.BufferAttribute(idx, 1));
+      g.computeVertexNormals();
+      group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+        color: 0x3a3d45, roughness: 0.92, side: THREE.DoubleSide,
+      })));
+
+      // The wall between the lane and the circuit, and the garages behind it.
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0xd8dce2, roughness: 0.8 });
+      const garageMat = new THREE.MeshStandardMaterial({ color: 0x2a3140, roughness: 0.9 });
+      const doorMat = new THREE.MeshStandardMaterial({ color: 0x151a22, roughness: 0.95 });
+      const wallParts = [], garageParts = [], doorParts = [];
+      const seg = Math.max(2, Math.round(steps / 26));
+      for (let k = 0; k < steps; k += seg) {
+        const t0 = k / steps, t1 = Math.min(1, (k + seg) / steps);
+        if (t0 < 0.08 || t1 > 0.92) continue;          // leave the tapers clear
+        const a = P((i0 + k) % n, outAt(t0) - HALF * side, 0);
+        const b = P((i0 + k + seg) % n, outAt(t1) - HALF * side, 0);
+        wallParts.push(boxBetween(a, b, 1.0, 0.45, 0.5));
+        const ga = P((i0 + k) % n, outAt(t0) + (HALF + 8) * side, 0);
+        const gb = P((i0 + k + seg) % n, outAt(t1) + (HALF + 8) * side, 0);
+        garageParts.push(boxBetween(ga, gb, 4.6, 7, 2.3));
+        doorParts.push(boxBetween(ga, gb, 3.0, 5.6, 1.5));
+      }
+      const merged = (parts, mat) => {
+        const m = mergeSimple(parts);
+        if (m) group.add(new THREE.Mesh(m, mat));
+      };
+      merged(wallParts, wallMat);
+      merged(garageParts, garageMat);
+      merged(doorParts, doorMat);
+    }
   }
 
   // ---- barriers, with advertising hoardings -------------------------------

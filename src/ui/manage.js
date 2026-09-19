@@ -15,6 +15,7 @@ import {
 } from '../mgmt/state.js';
 import { runRoundDevelopment, currentRound, seasonComplete } from '../mgmt/season.js';
 import { makeRng, subSeed } from '../mgmt/rng.js';
+import { driverMarket, signDriver, payoffCost, signingCost } from '../mgmt/market.js';
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -306,7 +307,7 @@ export function renderTeam(app, root) {
   const state = app.state;
   const team = playerTeam(state);
 
-  const drivers = panel('Drivers', null, team.drivers.map((d) => h('div', { class: 'offer' },
+  const drivers = panel('Drivers', null, team.drivers.map((d, i) => h('div', { class: 'offer' },
     h('div', { class: 'hd' },
       h('b', {}, `#${d.num}  ${d.name}`),
       h('span', { class: 'fee' }, `${money(d.salary ?? 0)}/season`)),
@@ -322,7 +323,13 @@ export function renderTeam(app, root) {
     h('div', { class: 'kv' }, h('span', { class: 'k' }, 'Form'),
       h('span', { class: `v ${d.form > 0.15 ? 'good' : d.form < -0.15 ? 'bad' : ''}` },
         d.form > 0.4 ? 'On a roll' : d.form > 0.15 ? 'Going well' : d.form < -0.4 ? 'In a slump' : d.form < -0.15 ? 'Struggling' : 'Level')),
-    h('p', { class: 'tiny dim', style: { marginTop: '8px' } }, temperamentNote(d)))));
+    h('p', { class: 'tiny dim', style: { marginTop: '8px' } }, temperamentNote(d)),
+    h('div', { class: 'btnrow', style: { marginTop: '10px' } },
+      h('button', {
+        class: 'btn sm', onClick: () => openDriverMarket(app, i),
+      }, 'Replace him'),
+      h('span', { class: 'tiny dim', style: { alignSelf: 'center' } },
+        `pay-off ${money(payoffCost(d))}`)))));
 
   const staff = panel('Technical staff', `wage bill ${money(Object.values(team.staff).reduce((a, s) => a + (s?.salary ?? 0), 0))}`,
     STAFF_ROLES.map((role) => {
@@ -342,7 +349,94 @@ export function renderTeam(app, root) {
         h('div', { class: 'tiny dim', style: { marginTop: '5px' } }, `${role.blurb} · ${effect}`));
     }));
 
-  mount(root, h('div', { class: 'grid g-side' }, drivers, h('div', { class: 'grid' }, staff, renderFacilities(app))));
+  const paddockNews = state.news.filter((n) => n.kind === 'driver' || n.kind === 'staff').slice(0, 12);
+  const paddock = panel('The paddock', 'who is moving where',
+    paddockNews.length
+      ? paddockNews.map((n) => h('div', { class: 'newsitem' },
+        h('span', { class: 'tag' }, n.kind === 'driver' ? 'Drivers' : 'Staff'),
+        n.text,
+        h('span', { class: 'tiny dim', style: { marginLeft: '8px' } },
+          `S${n.season} R${Math.min(state.calendar.length, n.round + 1)}`)))
+      : h('p', { class: 'dim small' }, 'Quiet. Nobody is moving anywhere just yet.'));
+
+  mount(root, h('div', { class: 'grid g-side' },
+    h('div', { class: 'grid' }, drivers, paddock),
+    h('div', { class: 'grid' }, staff, renderFacilities(app))));
+}
+
+// ---------------------------------------------------------------------------
+// Driver market
+// ---------------------------------------------------------------------------
+
+/**
+ * Putting a driver out of the car, mid-season if that is what it takes. You pay
+ * off what is left of his contract and you pay to get the next one in — and if
+ * the next one is already in somebody's car, you pay his team instead of him.
+ */
+function openDriverMarket(app, seatIndex) {
+  const state = app.state;
+  const team = playerTeam(state);
+  const outgoing = team.drivers[seatIndex];
+  const payoff = payoffCost(outgoing);
+  const market = driverMarket(state);
+
+  function row(entry) {
+    const d = entry.driver;
+    const fee = signingCost(d, entry.poached);
+    const total = payoff + fee;
+    const better = (d.skill ?? 0) - (outgoing.skill ?? 0);
+    return h('div', { class: 'offer' },
+      h('div', { class: 'hd' },
+        h('b', {}, d.name),
+        h('span', { class: 'tierbadge' + (entry.poached ? ' major' : '') },
+          entry.poached ? `under contract at ${entry.from.short}` : 'no drive'),
+        h('span', { class: 'fee' }, `${money(d.salary)}/season`)),
+      h('div', { class: 'tiny dim', style: { margin: '2px 0 9px' } },
+        `${d.country} · age ${d.age} · ${d.short}`),
+      ratingRow('Skill', d.skill),
+      ratingRow('Consistency', d.consistency),
+      ratingRow('Wet weather', d.wet),
+      ratingRow('Temperament', d.temperament, true),
+      h('div', { class: 'kv' },
+        h('span', { class: 'k' }, 'Against the man in the car'),
+        h('span', { class: `v ${better > 0.005 ? 'good' : better < -0.005 ? 'bad' : 'dim'}` },
+          `${better >= 0 ? '+' : ''}${(better * 100).toFixed(0)} skill`)),
+      h('div', { class: 'btnrow', style: { marginTop: '10px', alignItems: 'center' } },
+        h('button', {
+          class: 'btn sm primary',
+          onClick: () => confirmDialog(
+            `Sign ${d.name}?`,
+            `${outgoing.name} is out of the car with immediate effect — ${money(payoff)} to pay off what is left of his contract`
+            + `, and ${money(fee)} ${entry.poached ? `to ${entry.from.name} to release him` : 'as a signing fee'}. `
+            + `${money(total)} in all, and he is in the car from the next session.`,
+            'Do it',
+            () => {
+              signDriver(state, seatIndex, entry);
+              // Whatever was set up for this weekend was set up for the other
+              // driver, so it starts again with the new one in the car.
+              app.weekend = null;
+              app.phase = 'practice';
+              close();
+              app.save();
+              app.render();
+            }),
+        }, `Sign — ${money(total)} in all`),
+        h('span', { class: 'tiny dim' }, `${money(payoff)} pay-off + ${money(fee)} ${entry.poached ? 'buyout' : 'fee'}`)));
+  }
+
+  const close = modal(
+    h('h2', {}, `Replace ${outgoing.name}`),
+    h('p', { class: 'muted small' },
+      `He is on ${money(outgoing.salary)} a season with `
+      + `${outgoing.contractYears > 0 ? `${outgoing.contractYears} year${outgoing.contractYears === 1 ? '' : 's'} to run` : 'a contract that is up'}`
+      + `, so ending it now costs ${money(payoff)}. A driver cannot simply be removed — somebody has to be in the car, so pick the man who replaces him.`),
+    h('h3', { style: { marginTop: '18px' } }, 'Available'),
+    market.filter((e) => !e.poached).map(row),
+    h('h3', { style: { marginTop: '18px' } }, 'Under contract elsewhere'),
+    h('p', { class: 'tiny dim' }, 'They can be bought out of their seats. Their teams will replace them and will not thank you.'),
+    market.filter((e) => e.poached).map(row),
+    h('div', { class: 'btnrow', style: { marginTop: '16px' } },
+      h('button', { class: 'btn', onClick: () => close() }, 'Keep him')));
 }
 
 function ratingRow(label, v, invert = false, colour = null) {
