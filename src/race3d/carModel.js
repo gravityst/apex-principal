@@ -1636,7 +1636,18 @@ function buildLiveryCanvas(team, size) {
   /* ---- hull wrap: paint the right half then mirror across the keel ---- */
   const hull = rectPx(UVR.hull, S);
   const tile = makeCanvas(Math.max(8, Math.round(hull.w * 0.5)), Math.max(8, Math.round(hull.h)));
-  paintPattern(tile.getContext('2d'), tile.width, tile.height, team.livery, cols, seed);
+  // A livery the user painted themselves wins over the generated pattern. It is
+  // wrapped the same way — right half, then mirrored across the keel — so a
+  // single-view image reads correctly down both sides of the car.
+  const custom = team._liveryImg;
+  if (custom && custom.complete && custom.naturalWidth) {
+    const tc = tile.getContext('2d');
+    tc.fillStyle = cols.primary;
+    tc.fillRect(0, 0, tile.width, tile.height);
+    tc.drawImage(custom, 0, 0, tile.width, tile.height);
+  } else {
+    paintPattern(tile.getContext('2d'), tile.width, tile.height, team.livery, cols, seed);
+  }
   ctx.save();
   ctx.beginPath(); ctx.rect(hull.x, hull.y, hull.w, hull.h); ctx.clip();
   ctx.drawImage(tile, hull.x, hull.y, hull.w * 0.5, hull.h);
@@ -1992,7 +2003,7 @@ const _decalCache = new Map();
 const _detailCache = new Map();
 
 function acquireLivery(team, size) {
-  const key = team.id + '|' + size;
+  const key = team.id + '|' + size + '|' + (team.liveryRev || 0);
   let e = _liveryCache.get(key);
   if (e) { e.refs++; return e.tex; }
   let tex = null;
@@ -2004,7 +2015,7 @@ function acquireLivery(team, size) {
   return tex;
 }
 function releaseLivery(team, size) {
-  const key = team.id + '|' + size;
+  const key = team.id + '|' + size + '|' + (team.liveryRev || 0);
   const e = _liveryCache.get(key);
   if (!e) return;
   if (--e.refs > 0) return;

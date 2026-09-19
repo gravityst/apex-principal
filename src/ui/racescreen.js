@@ -76,12 +76,13 @@ export function renderRaceScreen(app, root, race, round) {
   const lightsRow = h('div', { class: 'lights' }, [0, 1, 2, 3, 4].map(() => h('i', {})));
   const ovLights = h('div', { class: 'ov startlights', style: { display: 'none' } }, lightsRow);
   const ovTower = h('div', { class: 'ov tower2' });
+  const liveRadio = h('div', { class: 'ov radiolive' });
   const ovCall = h('div', { class: 'callout', style: { display: 'none' } });
   const deckRow = h('div', { class: 'decks' });
   const ovBottom = h('div', { class: 'ov bottom' }, ovCall, deckRow);
 
   const stage = h('div', { class: 'stage' },
-    canvas3d, canvas2d, labelLayer, splitLabels, ovTop, ovFlags, ovMini, ovTower, ovLights, ovBottom);
+    canvas3d, canvas2d, labelLayer, splitLabels, ovTop, ovFlags, ovMini, liveRadio, ovTower, ovLights, ovBottom);
 
   // ---- the dock ---------------------------------------------------------
   const speedBtns = {};
@@ -580,6 +581,34 @@ export function renderRaceScreen(app, root, race, round) {
       h('span', { class: 'what' }, best.b.call));
   }
 
+  /**
+   * The radio, on the track, all the time. Newest on top so it never needs
+   * scrolling, four at once so it never becomes a wall, and it fades out from
+   * the bottom so the eye goes to the new one. It is a feed, not a panel: no
+   * pointer events, nothing behind it to click.
+   */
+  const LIVE_MAX = 4;
+  let liveSeen = 0;
+  function paintLiveRadio() {
+    const mineIdsL = mineIds;
+    const shown = [];
+    for (let i = race.feed.length - 1; i >= 0 && shown.length < LIVE_MAX; i--) {
+      const f = race.feed[i];
+      if (!(f.player || mineIdsL.has(f.car) || f.priority === 'high')) continue;
+      shown.push(f);
+    }
+    if (race.feed.length === liveSeen && liveRadio.childElementCount === shown.length) return;
+    liveSeen = race.feed.length;
+    liveRadio.replaceChildren(...shown.map((f, i) => h('div', {
+      class: `lrm from-${f.from || 'commentary'} pri-${f.priority || 'low'}`,
+      style: { opacity: String(1 - i * 0.22) },
+    },
+      h('div', { class: 'lrh' },
+        h('span', { class: 'who' }, SPEAKER_LABEL[f.from] || 'BROADCAST'),
+        h('span', { class: 'when' }, `L${f.lap} · ${clock(f.time)}`)),
+      h('div', { class: 'lrt' }, f.text))));
+  }
+
   function paintPanels(order) {
     lapNum.textContent = String(Math.min(race.lap + 1, race.lapsTotal));
     lapTot.textContent = `/${race.lapsTotal}`;
@@ -620,6 +649,7 @@ export function renderRaceScreen(app, root, race, round) {
 
     for (const d of decks) d.update();
     paintCallout();
+    paintLiveRadio();
 
     if (openTab === 'strategy') for (const b of briefs) b.update();
     if (openTab === 'timing') paintBigTower(order);
@@ -632,7 +662,7 @@ export function renderRaceScreen(app, root, race, round) {
       },
         h('div', { class: 'rmeta' },
           h('span', { class: 'rwho' }, SPEAKER_LABEL[f.from] || 'BROADCAST'),
-          h('span', { class: 'rlap' }, `LAP ${f.lap}`)),
+          h('span', { class: 'rlap' }, `LAP ${f.lap} · ${clock(f.time)}`)),
         h('div', { class: 'rtext' }, f.text))));
     }
   }
@@ -727,6 +757,12 @@ export function renderRaceScreen(app, root, race, round) {
   window.addEventListener('resize', onResize);
   paintPanels(race.order || race.updateOrder());
   requestAnimationFrame(frame);
+}
+
+/** Race time as a clock, for the radio stamps. */
+function clock(t) {
+  const s = Math.max(0, Math.floor(t || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 function infoChip(label) {

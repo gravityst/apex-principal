@@ -310,6 +310,12 @@ export function createWeekend(opts) {
     if (c.ersMode === 'deploy' && c.ersCharge > 0.02) t -= 0.16;
     else if (c.ersMode === 'harvest') t += 0.22;
 
+    // Air. Downforce lost in the wake costs time through the corners — which is
+    // exactly what `perGripLoss` measures, so the circuit decides how much it
+    // hurts. The tow gives some of it back on the straights, and never all.
+    t += (c.dirtyAir ?? 0) * 0.055 * c.model.perGripLoss;
+    t -= (c.tow ?? 0) * 0.022 * c.model.perGripLoss;
+
     if (!c.isPlayer) t += fieldHandicap;
     if (race.safetyCar) t *= race.safetyCar.kind === 'sc' ? 1.62 : 1.34;
     return t;
@@ -686,24 +692,6 @@ export function createWeekend(opts) {
     return t * t * t * (t * (t * 6 - 15) + 10);
   }
 
-  /** How far through the move a car is, as a share of the distance to be made up. */
-  function duelShape(duel, phase) {
-    if (duel.outcome === 'pass') {
-      // Out of the tow, hard on the brakes, then settle in front.
-      return smootherstep((phase - 0.08) / 0.84);
-    }
-    // A look up the inside that does not stick: alongside at the apex, back in
-    // line on the exit.
-    return Math.sin(Math.PI * smootherstep(phase)) * 0.92;
-  }
-
-  /** Where a car sits across the road while a move is happening. */
-  function duelEnvelope(duel, phase) {
-    if (duel.outcome === 'pass') {
-      return Math.min(1, phase * 2.6) * (1 - smootherstep((phase - 0.82) / 0.18));
-    }
-    return Math.sin(Math.PI * Math.min(1, phase * 1.02));
-  }
 
   /**
    * Move the car across the track. Cars do not jump sideways, so the lateral
@@ -720,10 +708,17 @@ export function createWeekend(opts) {
       // Down the pit lane, where the pit lane actually is.
       target = (pit.side === 'right' ? 1 : -1) * (pit.laneOffset ?? 15);
     } else if (c.duel) {
-      // Alongside: far enough over to be a second car abreast, eased in and out
-      // so the move reads as a move rather than a sidestep.
-      const env = duelEnvelope(c.duel, Math.min(1, c.duel.t / c.duel.dur));
-      target = racingLine(p) + c.duel.side * Math.min(w * 0.62, 3.2) * Math.max(0.22, env);
+      // He commits to a lane: a full car's width off the line, held for as long
+      // as the move lasts and given up when he backs out of it.
+      // He stays in the tow and only pulls out for the braking zone. Moving
+      // across at the start of the run looks decisive and throws away the one
+      // thing that was going to get him there.
+      const d = c.duel;
+      const pullAt = (d.apexAt || 1) * 0.55;
+      const env = d.stage === 'backout'
+        ? Math.max(0, 1 - (d.t - d.apexAt) / 1.2)
+        : Math.max(0, Math.min(1, (d.t - pullAt) / Math.max(0.45, (d.apexAt || 1) * 0.35)));
+      target = racingLine(p) + d.side * Math.min(w * 0.62, 3.2) * env;
     } else if (c._launch) {
       target = (c._gridSide || 1) * Math.min(w * 0.44, 2.6);
     } else if (c.defending) {
@@ -777,14 +772,15 @@ export function createWeekend(opts) {
       const pc = c.lap + posOf(c);
       const gap = (pa - pc) * track.length;
       if (gap > 12 || gap < 0) continue;
-      const need = Math.abs(ahead.lateral - c.lateral) > 2.6 ? 2.2 : 7.0;
+      // How close he may get depends on how far across he is. Fully alongside,
+      // a couple of metres; on the same line, a car's length and a bit. Graded,
+      // because half a car's width of overlap is exactly where two cars end up
+      // occupying the same piece of road.
+      const lat = Math.abs((ahead.lateral ?? 0) - (c.lateral ?? 0));
+      const need = lat >= 2.2 ? 1.9 : 6.6 - (lat / 2.2) * 4.7;
       if (gap >= need) continue;
       // Hold him back, but never push him across the timing line backwards.
-      const back = (need - gap) / track.length;
-      const pos = posOf(c) - back;
-      if (pos <= 0.0008) continue;
-      c.u = phaseOf(c, pos);
-      c.distance = c.lap * track.length + c.u * track.length;
+      nudge(c, -(need - gap));
     }
   }
 
@@ -945,89 +941,408 @@ export function createWeekend(opts) {
     return z.start <= z.end ? (u >= z.start && u <= z.end) : (u >= z.start || u <= z.end);
   }
 
+  /**
+   * Shift a car a few metres along the circuit.
+   *
+   * Everything that nudges a car — a launch being paid out, the closing speed
+   * in a move, the field closing up behind a safety car — goes through here,
+   * and here refuses to cross the timing line. Crossing it is the main loop's
+   * job, because that is where the lap time, the sectors and the pit decision
+   * live. A nudge that wrapped `u` past one on its own left the car a whole lap
+   * down: it never completed a lap again all afternoon.
+   */
+  function nudge(c, metres) {
+    if (!metres) return;
+    // The main loop may already have carried `u` past one this step and not yet
+    // turned it into a lap. Touching it here would map it back to the start of
+    // the lap without the counter moving, and the car would never complete a
+    // lap again — which is exactly what happened.
+    if (c.u >= 0.9992 || c.u <= 0.0008) return;
+    const p = posOf(c) + metres / track.length;
+    if (p >= 0.9992 || p <= 0.0008) return;      // next step, when the line is crossed properly
+    c.u = phaseOf(c, p);
+    c.distance = c.lap * track.length + c.u * track.length;
+  }
+
+  // ---- the radio -----------------------------------------------------------
+  //
+  // Two voices and they are not interchangeable. The engineer has the numbers:
+  // gaps, intervals, tyre life, what the car behind is on. The driver has the
+  // car: short, dry, and not always agreeable. Every line below is triggered by
+  // something that actually happened in the simulation — none of it is filler.
+
+  const DRIVER_SAYS = {
+    attackInside: ['I\'m going up the inside.', 'Got a run. Inside.', 'He\'s left it open. Going.'],
+    attackOutside: ['I\'ll go round the outside of him.', 'Taking the long way. Watch this.', 'Outside. Stay with me.'],
+    conceded: ['Yes. That\'s him done.', 'Clear. Next one.', 'Told you.'],
+    heldUp: ['He shut the door. I had to lift.', 'Nothing there. He got the line.', 'Couldn\'t make it stick.'],
+    switchback: ['Right. I\'ll have him on the exit.', 'Switching back. Give me a second.'],
+    passed: ['That\'s the place. Where\'s the next one?', 'Done. Gap?', 'Clear air at last.'],
+    lost: ['He got me. I had nothing on the exit.', 'Lost it. He was quicker there.'],
+    ack: ['Copy.', 'Copy that.', 'Understood.', 'Copy. Leave me to it.', 'Yeah, got it.'],
+  };
+
+  function radioDriver(c, bucket, priority = 'low') {
+    if (!c.isPlayer) return;
+    say(`${c.driver.name}: "${rng.pick(DRIVER_SAYS[bucket])}"`,
+      { kind: 'chatter', from: 'driver', priority, car: c.id, player: true });
+  }
+  function radioEng(c, text, priority = 'normal') {
+    if (!c.isPlayer) return;
+    say(text, { kind: 'brief', from: 'engineer', priority, car: c.id, player: true });
+  }
+
+  function radioAttempt(c, ahead, inside) {
+    if (c.isPlayer) {
+      radioDriver(c, inside ? 'attackInside' : 'attackOutside', 'normal');
+    } else if (ahead.isPlayer) {
+      radioEng(ahead, `${short(ahead)}, ${short(c)} is having a go${inside ? ' up the inside' : ' round the outside'}. Cover it.`, 'high');
+    }
+  }
+  function radioConcede(c, ahead) {
+    if (c.isPlayer) radioDriver(c, 'conceded', 'normal');
+    else if (ahead.isPlayer) radioEng(ahead, `He has the corner, ${short(ahead)}. Give him room and get the exit.`, 'high');
+  }
+  function radioHold(c, ahead) {
+    if (c.isPlayer) radioDriver(c, 'heldUp', 'low');
+    else if (ahead.isPlayer) radioEng(ahead, `Good defence, ${short(ahead)}. He had to lift.`, 'normal');
+  }
+  function radioSwitchback(c, ahead) {
+    if (c.isPlayer) radioDriver(c, 'switchback', 'normal');
+    else if (ahead.isPlayer) radioEng(ahead, `Watch the switchback — he is crossing back behind you.`, 'high');
+  }
+  function radioPassed(c, ahead) {
+    if (c.isPlayer) {
+      radioDriver(c, 'passed', 'normal');
+      radioEng(c, `That is P${Math.max(1, c.position - 1)}. Next is ${gapAheadText(c)}.`, 'normal');
+    } else if (ahead.isPlayer) {
+      radioDriver(ahead, 'lost', 'normal');
+      radioEng(ahead, `He is through. You are P${ahead.position + 1}. We go again — ${tyreLifeText(ahead)}.`, 'high');
+    }
+  }
+  const short = (c) => c.driver.short || c.driver.name.split(' ').pop();
+  function gapAheadText(c) {
+    const order = race.order || updateOrder();
+    const a = order[order.indexOf(c) - 1];
+    return a ? `${short(a)}, ${Math.abs(c.interval).toFixed(1)} up the road` : 'clear air';
+  }
+  function tyreLifeText(c) {
+    const left = Math.max(0, 1 - c.wear);
+    return `tyres are at ${(left * 100).toFixed(0)}%`;
+  }
+
+  /**
+   * The things the pit wall says without being asked: the tyre crossing a
+   * threshold, a rival on fresher rubber, the last lap. Each fires once.
+   */
+  function radioWatch(c) {
+    if (!c.isPlayer || c.status !== 'running') return;
+    if (!c._said) c._said = {};
+    const m = c._said;
+    const stint = `${c.stops}`;
+
+    if (c.wear > 0.60 && m.deg60 !== stint) {
+      m.deg60 = stint;
+      radioEng(c, `${short(c)}, tyres are through sixty percent. Deg is about ${(0.06 + c.wear * 0.08).toFixed(2)} a lap now. Window opens in a few.`);
+      if (rng.chance(0.5)) radioDriver(c, 'ack');
+    }
+    if (c.wear > 0.80 && m.deg80 !== stint) {
+      m.deg80 = stint;
+      radioEng(c, `Eighty percent on those tyres. They will fall away quickly from here — we need a decision.`, 'high');
+    }
+    const order = race.order || updateOrder();
+    const behind = order[order.indexOf(c) + 1];
+    if (behind && behind.status === 'running' && behind.interval < 2.0
+        && behind.stops > c.stops && m.undercut !== `${behind.id}:${behind.stops}`) {
+      m.undercut = `${behind.id}:${behind.stops}`;
+      radioEng(c, `Car behind is ${behind.interval.toFixed(1)} back on fresh ${TYRE_COMPOUNDS[behind.tyre]?.name ?? behind.tyre}. We should cover.`, 'high');
+    }
+    const ahead = order[order.indexOf(c) - 1];
+    if (ahead && ahead.status === 'running' && ahead.stops < c.stops && c.interval < 3.0
+        && m.overcut !== `${ahead.id}:${ahead.stops}`) {
+      m.overcut = `${ahead.id}:${ahead.stops}`;
+      radioEng(c, `${short(ahead)} has not stopped yet. Stay out and the overcut is on — ${c.interval.toFixed(1)} to find.`);
+    }
+    if (totalLaps - c.lap === 1 && m.last !== '1') {
+      m.last = '1';
+      radioEng(c, `Last lap, ${short(c)}. ${c.interval < 2 ? 'Everything you have got.' : 'Bring it home.'}`, 'high');
+      if (rng.chance(0.7)) radioDriver(c, 'ack', 'normal');
+    }
+  }
+
+  // ---- fighting ------------------------------------------------------------
+
+  /** How much of a car length the attacker has on the defender. 1 = alongside. */
+  const CAR_LENGTH = 5.6;
+
+  /** True gap in metres between two cars, positive when `b` is behind `a`. */
+  function gapMetres(a, b) {
+    return (a.lap + posOf(a) - b.lap - posOf(b)) * track.length;
+  }
+
+  /** How straight it is here, 0 in a hairpin and 1 on the main straight. */
+  function straightness(p) {
+    return 1 - Math.min(1, Math.abs(track.curv[trackAt(p)]) / 0.0042);
+  }
+
+  /**
+   * Air. Two effects, opposite signs, and that is the whole point of following
+   * somebody: in the corners you lose downforce and cannot stay with him, and
+   * on the straights you get a tow and pull back what you lost. Net, it is a
+   * loss — which is why a train forms and why DRS exists.
+   *
+   * The wake is behind the car, not beside it. Pull fully alongside and it
+   * clears, which is what makes a move stick once it is made.
+   */
+  function updateAir(c, ahead) {
+    if (!ahead || ahead.status !== 'running' || c.status !== 'running') {
+      c.dirtyAir = 0; c.tow = 0; return;
+    }
+    const gapS = c.interval;
+    const lat = Math.abs((c.lateral ?? 0) - (ahead.lateral ?? 0));
+    // Out of the wake sideways: a full car's width clear of him is clean air.
+    const inWake = Math.max(0, 1 - lat / 2.9);
+    const near = gapS < 2.0 ? Math.min(1, (2.0 - gapS) / 1.5) : 0;
+    c.dirtyAir = near * inWake;
+    // The tow only exists where there is speed to be had.
+    c.tow = near * inWake * straightness(posOf(c)) * (gapS < 1.1 ? 1 : 0.45);
+  }
+
+  /**
+   * DRS, with a detection point. You are only allowed the flap if you were
+   * within a second at the line before the zone — which is why a defender will
+   * sometimes deliberately drop back to lose the detection.
+   */
+  function updateDRS(c, fromPos, toPos) {
+    if (!c.drsArm) c.drsArm = {};
+    const allowed = !race.safetyCar && c.lap >= 2 && weather.wetness < 0.3;
+    for (let i = 0; i < drsZones.length; i++) {
+      const z = drsZones[i];
+      if (crossed(fromPos, toPos, z.detect)) {
+        const was = !!c.drsArm[i];
+        c.drsArm[i] = allowed && c.interval < 1.0 && c.position > 1;
+        if (c.drsArm[i] && !was && c.isPlayer) {
+          say(`You are inside a second at the detection — DRS available in the next zone.`,
+            { kind: 'drs', from: 'engineer', priority: 'normal', car: c.id, player: true });
+        }
+      }
+      if (crossed(fromPos, toPos, z.end)) c.drsArm[i] = false;
+    }
+    let open = false;
+    for (let i = 0; i < drsZones.length; i++) {
+      if (c.drsArm[i] && inZone(toPos, drsZones[i])) { open = true; break; }
+    }
+    c.drs = open && allowed;
+  }
+
+  /**
+   * Open a move. Which side each car takes is decided here and it matters:
+   * the defender covers the inside if he sees it coming, and going round the
+   * outside then needs the attacker to be fully alongside at turn-in rather
+   * than merely overlapping.
+   */
+  function startMove(c, ahead, apex) {
+    const insideSide = apex ? -Math.sign(apex.k) : (ahead.lateral > 0 ? -1 : 1);
+    // Can the attacker get to the inside before it is shut? Quick, aggressive
+    // drivers against slow-reacting ones, mostly.
+    const quick = (c.driver.aggression ?? 0.75) * 0.55 + (c.driver.skill ?? 0.85) * 0.45
+      - (ahead.driver.skill ?? 0.85) * 0.35 - (ahead.driver.consistency ?? 0.88) * 0.2 + 0.28;
+    const takesInside = rng.chance(Math.max(0.15, Math.min(0.9, quick)));
+    const side = takesInside ? insideSide : -insideSide;
+
+    const v = Math.max(28, currentSpeed(c));
+    const reach = apex ? apex.metres : 190;
+    const apexAt = Math.max(0.9, Math.min(6.5, reach / v));
+
+    c.duel = {
+      targetId: ahead.id,
+      side,
+      inside: takesInside,
+      // How much overlap he needs at turn-in to be given the corner. Down the
+      // inside, a front wheel alongside is enough. Round the outside it is not.
+      needed: takesInside ? 0.45 : 0.76,
+      stage: 'run',
+      t: 0,
+      apexAt,
+      overlap: 0,
+      contact: false,
+      reply: false,
+      decided: null,
+      announced: false,
+    };
+    ahead.defending = takesInside ? -insideSide : insideSide;   // he covers the inside
+    ahead.defendEnv = 0;
+    ahead.battleCooldown = Math.max(ahead.battleCooldown, 1.2);
+    radioAttempt(c, ahead, takesInside);
+  }
+
+  /**
+   * Run a move on. The attacker closes at whatever his real advantage is worth
+   * — pace, tyre, tow, DRS — and the overlap that produces at turn-in is what
+   * decides the corner. Nothing is scripted: a car that is not quick enough
+   * simply does not get there, which is what a failed attempt actually is.
+   */
+  function stepMove(c, dt) {
+    const d = c.duel;
+    const ahead = race.cars.find((x) => x.id === d.targetId);
+    if (!ahead || ahead.status !== 'running' || c.status !== 'running') { endMove(c, false); return; }
+    d.t += dt;
+
+    const gap = gapMetres(ahead, c);
+    d.overlap = Math.max(0, Math.min(1, 1 - gap / CAR_LENGTH));
+    const lat = Math.abs((c.lateral ?? 0) - (ahead.lateral ?? 0));
+    const alongside = lat > 2.4;
+
+    // The defender covers, and lets go once it is over.
+    ahead.defendEnv = d.stage === 'backout' ? Math.max(0, (ahead.defendEnv ?? 0) - dt * 1.6)
+      : Math.min(1, (ahead.defendEnv ?? 0) + dt * 2.4);
+
+    if (d.stage === 'run' || d.stage === 'alongside' || d.stage === 'switchback') {
+      // What he is actually worth, in metres a second.
+      const paceAdv = Math.max(-0.6, currentLapTime(ahead) - currentLapTime(c)) * 0.9;
+      const tow = alongside ? 0 : (c.tow ?? 0) * 5.5;              // gone once he is out of the wake
+      const drs = c.drs ? 7.0 * straightness(posOf(c)) : 0;
+      const grit = ((c.driver.aggression ?? 0.75) - 0.5) * 2.2;
+      const held = ((ahead.driver.skill ?? 0.85) - 0.8) * 3.0 + (ahead.mode === 'hold' ? 1.4 : 0);
+      let closing = paceAdv * 9.0 + tow + drs + grit - held;
+      if (d.stage === 'switchback') closing += 5.5;                 // better exit, better drive
+      // Once he is level there is nothing left to gain from the tow, so the
+      // last half a car length is the hardest. That is the whole feel of it.
+      closing *= 1 - d.overlap * 0.40;
+      closing = Math.max(-4, Math.min(16, closing));
+      nudge(c, closing * dt);
+
+      if (d.overlap > 0.22) d.stage = d.stage === 'switchback' ? 'switchback' : 'alongside';
+    }
+
+    // Turn-in. The corner is decided here, once, on the overlap he has.
+    if (!d.decided && d.t >= d.apexAt) {
+      if (!d.contact) {
+        d.contact = true;
+        const marginal = d.overlap > 0.3 && d.overlap < d.needed + 0.18;
+        if (marginal) {
+          const wild = (1 - (c.driver.consistency ?? 0.88)) * (c.driver.aggression ?? 0.75)
+            + (1 - (ahead.driver.consistency ?? 0.88)) * 0.55;
+          if (rng.chance(wild * (0.05 + weather.wetness * 0.2))) {
+            contact(c, ahead);
+            c.duel = null;
+            return;
+          }
+        }
+      }
+      if (d.overlap >= d.needed) {
+        d.decided = 'pass';
+        d.stage = 'alongside';
+        radioConcede(c, ahead, d.inside);
+      } else {
+        d.decided = 'hold';
+        d.stage = 'backout';
+        c.incidentTimer += rng.range(0.08, 0.3);      // the lift
+        radioHold(c, ahead);
+      }
+    }
+
+    // Through: he has the corner, so he completes it and takes the place.
+    if (d.decided === 'pass') {
+      if (gap < -CAR_LENGTH * 1.25) { endMove(c, true); return; }
+      if (d.t > d.apexAt + 4.5) { endMove(c, gapMetres(ahead, c) < 0); return; }
+      return;
+    }
+
+    // Backed out. He drops in behind, and may cross back for the exit.
+    if (d.decided === 'hold') {
+      if (d.t > d.apexAt + 1.4) {
+        if (!d.reply && d.stage !== 'switchback'
+            && rng.chance(0.11 + (c.driver.aggression ?? 0.75) * 0.15)) {
+          d.stage = 'switchback';
+          d.side = -d.side;
+          d.inside = !d.inside;
+          d.needed = d.inside ? 0.5 : 0.8;
+          d.decided = null;
+          d.contact = false;
+          d.reply = true;
+          d.apexAt = d.t + rng.range(1.0, 1.7);
+          ahead.defending = -d.side;
+          radioSwitchback(c, ahead);
+          return;
+        }
+        endMove(c, false);
+      }
+    }
+  }
+
+  function endMove(c, passed) {
+    const d = c.duel;
+    if (!d) return;
+    const ahead = race.cars.find((x) => x.id === d.targetId);
+    if (ahead) { ahead.defending = 0; ahead.defendEnv = 0; ahead.battleCooldown = passed ? 4 : 2.5; }
+    c.battleCooldown = passed ? 7 : 5.5;
+    if (passed && ahead) {
+      say(`${c.driver.name} ${d.inside ? 'goes down the inside of' : 'holds it round the outside of'} ${ahead.driver.name} and takes the place.`,
+        { kind: 'overtake', car: c.id, player: c.isPlayer || ahead.isPlayer });
+      radioPassed(c, ahead);
+      // The switchback the other way: a better exit and he has it straight back.
+      const grit = (ahead.driver.skill ?? 0.85) * (ahead.driver.aggression ?? 0.75);
+      if (!d.reply && rng.chance(0.03 + grit * 0.055)) {
+        ahead.battleCooldown = 0;
+        startMove(ahead, c, nextApex(posOf(ahead)));
+        if (ahead.duel) { ahead.duel.reply = true; ahead.duel.apexAt = rng.range(1.1, 1.9); }
+      }
+    }
+    c.duel = null;
+  }
+
   function updateBattles(dt) {
     const order = race.order || updateOrder();
-    for (let i = 1; i < order.length; i++) {
+    for (let i = 0; i < order.length; i++) {
       const c = order[i], ahead = order[i - 1];
-      if (c.status !== 'running' || ahead.status !== 'running') { c.dirtyAir = 0; c.drs = false; continue; }
+      if (c.status !== 'running') { c.dirtyAir = 0; c.tow = 0; c.drs = false; continue; }
+      updateAir(c, i > 0 ? ahead : null);
 
-      const gap = c.interval;
-      c.dirtyAir = gap < 1.6 ? Math.min(1, (1.6 - gap) / 1.6) : 0;
-      c.drs = !race.safetyCar && gap < 1.0 && c.lap >= 2 && drsZones.some((z) => inZone(posOf(c), z)) && weather.wetness < 0.3;
-
-      if (c.battleCooldown > 0) { c.battleCooldown -= dt; continue; }
-      // One move at a time. Without this a car already committed to a pass
-      // could open a second one every time it crossed a detection point, and
-      // the order turned over three times a lap.
+      if (c.battleCooldown > 0) c.battleCooldown -= dt;
+      if (!ahead || ahead.status !== 'running') continue;
       if (c.duel || ahead.duel || c.defending) continue;
-      if (race.safetyCar || gap > 0.75) continue;
+      if (c.battleCooldown > 0) continue;
+      if (race.safetyCar) continue;
 
-      // An attempt is only resolved at the end of a DRS zone or a big braking
-      // zone; this is checked once per pass through that point, not per tick.
-      // On the opening lap every corner is an opportunity, because it is: the
-      // field is bunched, nobody has clean air, and everyone is still on the
-      // tyres and the fuel they started with.
+      // The run to the corner is part of the move. From half a second back you
+      // need the tow and the flap to get there; from two car lengths you can
+      // have a go at anything. Both are attempts — only one of them works.
+      const gap = c.interval;
+      const metres = gapMetres(ahead, c);
+      if (metres > 75 || metres < 0) continue;
+      if (gap > 1.05) continue;
+
+      // Opportunities are the braking zones. Every corner counts on lap one,
+      // because on lap one it does.
       const firstLap = c.lap < 1;
-      const atCorner = firstLap && Math.abs(track.curv[trackAt(posOf(c))]) > 0.0075;
-      const zone = drsZones.find((z) => inZone(posOf(c), z));
-      if (!zone && !atCorner) { c._armed = true; continue; }
-      if (!c._armed) continue;
-      c._armed = false;
-
-      const paceDelta = currentLapTime(ahead) - currentLapTime(c);   // + = attacker faster
-      const tyreDelta = (tyreGrip(c.tyre, c.wear, weather.wetness, c.tyreAge) - tyreGrip(ahead.tyre, ahead.wear, weather.wetness, ahead.tyreAge)) * 14;
-      const drsBonus = c.drs ? 0.50 : 0;
-      const attack = (c.driver.aggression ?? 0.75) * 0.8 + (c.driver.skill ?? 0.85) * 0.6;
-      const defend = (ahead.driver.skill ?? 0.85) * 0.75 + (ahead.driver.consistency ?? 0.88) * 0.35
-        + (ahead.mode === 'hold' ? 0.22 : 0);
-
-      // A car that is not actually faster does not get past. Without this a
-      // train of evenly matched cars shuffles itself every lap and qualifying
-      // stops meaning anything.
-      if (paceDelta < -0.10 && !c.drs && !firstLap) { c.battleCooldown = 4; continue; }
-
-      const score = paceDelta * 1.05 + tyreDelta * 0.42 + drsBonus + (attack - defend) * 0.75 + (0.75 - gap) * 0.55
-        + (firstLap ? 0.20 : 0);
-      // Overtaking an evenly matched car is genuinely hard. The offset is what
-      // makes track position worth something and a pit call a real decision.
-      const p = 1 / (1 + Math.exp(-score * 1.9)) - 0.56;
-
-      // Where the move happens, and therefore how long it takes: the braking
-      // zone for the next corner. Inside for the corner if there is one, and
-      // whichever side the man in front is not on if there is not.
       const apex = nextApex(posOf(c));
-      const side = apex ? -Math.sign(apex.k) : (ahead.lateral > 0 ? -1 : 1);
-      const inside = !!apex;
-      const v = Math.max(28, currentSpeed(c));
-      const reach = apex ? apex.metres : 200;
-      const dur = Math.max(1.6, Math.min(5.5, reach / v + 0.7));
-      const gapM = Math.max(3, (ahead.lap + posOf(ahead) - c.lap - posOf(c)) * track.length);
+      if (!apex) continue;
+      const bigEnough = Math.abs(apex.k) > (firstLap ? 0.0060 : 0.0030);
+      // How long a run he is allowed. A pass down a straight IS the straight —
+      // five or six seconds of tow and flap — so the window opens much earlier
+      // when he is close enough to have one.
+      const runway = gap < 0.85 ? currentSpeed(c) * 5.8 : currentSpeed(c) * 2.4;
+      const close = apex.metres < Math.max(90, runway);
+      if (!bigEnough || !close) continue;
+      // One go per corner. Keyed on the corner itself rather than a flag, or a
+      // circuit with a corner always in range never re-arms and a car gets one
+      // attempt in the whole race.
+      const key = `${c.lap}:${apex.u.toFixed(4)}`;
+      if (c._lastApex === key) continue;
+      c._lastApex = key;
 
-      if (rng.chance(Math.max(0, p))) {
-        // A pass is not a swap of positions. He comes out of the tow, pulls
-        // alongside on the brakes, and is in front by the exit — which is both
-        // what happens in a race and the only way it looks like one.
-        c.duel = {
-          targetId: ahead.id, side, inside, outcome: 'pass', t: 0, dur,
-          total: gapM + 9, shape: 0, contact: false, reply: false,
-          announced: false,
-        };
-        ahead.defending = -side;
-        ahead.defendEnv = 0;
-        ahead.battleCooldown = 2;
-      } else {
-        // He has a look, gets alongside, and cannot make it stick.
-        c.duel = {
-          targetId: ahead.id, side, inside, outcome: 'fail', t: 0,
-          dur: Math.max(1.5, Math.min(3.6, dur * 0.8)),
-          total: gapM * 0.92, shape: 0, contact: false, reply: false,
-          announced: false,
-        };
-        ahead.defending = -side;
-        ahead.defendEnv = 0;
-        c.incidentTimer += rng.range(0.15, 0.55);
-        c.battleCooldown = 7;
-      }
+      // He needs a reason. Pace, a better tyre, DRS or a tow — and if he has
+      // none of them he sits there and waits, which is a DRS train.
+      const paceDelta = currentLapTime(ahead) - currentLapTime(c);
+      const tyreDelta = tyreGrip(c.tyre, c.wear, weather.wetness, c.tyreAge)
+        - tyreGrip(ahead.tyre, ahead.wear, weather.wetness, ahead.tyreAge);
+      const worth = paceDelta * 1.6 + tyreDelta * 9 + (c.drs ? 0.55 : 0) + (c.tow ?? 0) * 0.35
+        + ((c.driver.aggression ?? 0.75) - 0.7) * 0.9 + (firstLap ? 0.45 : 0);
+      if (worth < 0.04) { c.battleCooldown = 3; continue; }
+      if (!rng.chance(Math.min(0.92, 0.28 + worth * 0.5))) { c.battleCooldown = 2.5; continue; }
+
+      startMove(c, ahead, apex);
     }
   }
 
@@ -1112,7 +1427,8 @@ export function createWeekend(opts) {
       const ctx = pitContext(c);
       if (rng.chance(complianceChance(c.driver, 'pit', ctx))) {
         c.pitRequested = arg || 'medium';
-        say(`Box, box. ${TYRE_COMPOUNDS[c.pitRequested]?.name ?? c.pitRequested} ready.`, { kind: 'order', car: c.id, player: true });
+        say(`Box box, box box. ${TYRE_COMPOUNDS[c.pitRequested]?.name ?? c.pitRequested} ready.`, { kind: 'order', car: c.id, player: true });
+        if (rng.chance(0.75)) radioDriver(c, 'ack', 'normal');
         return { ok: true, complied: true };
       }
       c.defiance = 2;
@@ -1134,6 +1450,7 @@ export function createWeekend(opts) {
         c.orderedMode = arg;
         c.defiance = 0;
         say(orderText(c, arg), { kind: 'order', car: c.id, player: true });
+        if (rng.chance(0.55)) radioDriver(c, 'ack');
         return { ok: true, complied: true };
       }
       // Refused. He keeps doing what he was doing, and for a while he stops
@@ -1227,6 +1544,23 @@ export function createWeekend(opts) {
       // the tyre is going, flat out at the end.
       const lapsLeft = totalLaps - c.lap;
       const fuelShort = c.fuel < lapsLeft * fuelPerLap * 1.01;
+      const behindGap = race.gapBehind(c);
+
+      // Air, as a driver experiences it. Sitting in someone's wake ruins the
+      // tyres for nothing, so a driver who cannot pass drops back out of it,
+      // cools the car and comes again with a run. A driver being caught puts
+      // his head down and tries to break the tow before it matters.
+      if (c.dirtyAir > 0.55 && c.battleCooldown > 1.5 && c.interval < 1.0 && lapsLeft > 4) {
+        c.mode = 'conserve';
+        c._cooling = true;
+        return;
+      }
+      if (c._cooling && c.interval > 1.4) c._cooling = false;
+      if (behindGap != null && behindGap < 1.6 && !fuelShort && c.wear < 0.9) {
+        c.mode = 'push';                      // he is in my mirrors: break the tow
+        return;
+      }
+
       if (fuelShort && lapsLeft > 2) c.mode = 'conserve';
       else if (c.wear > 0.88 && lapsLeft > 5) c.mode = 'conserve';
       else if (lapsLeft < 8 || c.interval < 1.2) c.mode = 'push';
@@ -1333,7 +1667,7 @@ export function createWeekend(opts) {
         const take = c._launch * (1 - Math.exp(-dt / 2.2));
         c._launch -= take;
         if (Math.abs(c._launch) < 0.05) c._launch = 0;
-        c.u = phaseOf(c, Math.max(0, posOf(c) + take / track.length));
+        nudge(c, take);
 
         // A launch that has run out of road is a move, not a queue. The
         // manoeuvre system already knows how to put one car alongside another,
@@ -1341,15 +1675,15 @@ export function createWeekend(opts) {
         if (c._launch > 0.6 && !c.duel && c.battleCooldown <= 0) {
           const ord = race.order || race.cars;
           const ahead = ord[ord.indexOf(c) - 1];
-          if (ahead && ahead.status === 'running' && !ahead.duel) {
-            const gapM = (ahead.lap + posOf(ahead) - c.lap - posOf(c)) * track.length;
-            if (gapM > 0 && gapM < 22) {
-              const dur = rng.range(1.7, 2.9);
-              c.duel = {
-                targetId: ahead.id, side: c._gridSide || 1, outcome: 'pass',
-                t: 0, dur, rate: (gapM + 9) / dur, announced: false,
-              };
-              ahead.battleCooldown = 1.6;
+          if (ahead && ahead.status === 'running' && !ahead.duel && !ahead.defending) {
+            const gapM = gapMetres(ahead, c);
+            if (gapM > 0 && gapM < 26) {
+              startMove(c, ahead, nextApex(posOf(c)));
+              if (c.duel) {
+                // A start is decided in seconds, not over a run to the corner.
+                c.duel.apexAt = Math.min(c.duel.apexAt, rng.range(1.2, 2.0));
+                c.duel.side = c._gridSide || c.duel.side;
+              }
             }
           }
         }
@@ -1358,69 +1692,10 @@ export function createWeekend(opts) {
       // A move in progress: the attacker carries extra speed out of the tow,
       // eased in and out, so the places change while the cars are moving
       // rather than between one frame and the next.
-      if (c.duel) {
-        c.duel.t += dt;
-        const phase = Math.min(1, c.duel.t / c.duel.dur);
-        const target0 = race.cars.find((x) => x.id === c.duel.targetId);
+      if (c.duel) stepMove(c, dt);
 
-        // The whole move is a distance to be made up, spent along a curve that
-        // is slow out of the corner behind, quick on the brakes, and settled by
-        // the exit. Spending it by a fixed rate per second, which is what this
-        // used to do, is why a pass looked like a car being dragged past.
-        const sh = duelShape(c.duel, phase);
-        const step = (c.duel.total ?? 0) * (sh - (c.duel.shape ?? 0));
-        c.duel.shape = sh;
-        if (step) c.u = phaseOf(c, posOf(c) + step / track.length);
+      updateDRS(c, posOf(c, prevU), posOf(c));
 
-        // The man in front covers, and eases back as it resolves.
-        if (target0 && target0.status === 'running') {
-          target0.defending = -c.duel.side;
-          target0.defendEnv = duelEnvelope(c.duel, phase);
-        }
-
-        // Alongside at the apex is where it goes wrong, if it is going to.
-        if (!c.duel.contact && phase > 0.42 && phase < 0.62 && target0) {
-          c.duel.contact = true;
-          const wild = (1 - (c.driver.consistency ?? 0.88)) * (c.driver.aggression ?? 0.75)
-            + (1 - (target0.driver.consistency ?? 0.88)) * 0.6;
-          if (rng.chance(wild * (0.035 + weather.wetness * 0.16))) {
-            contact(c, target0);
-            c.duel = null;
-            continue;
-          }
-        }
-
-        if (c.duel.t >= c.duel.dur) {
-          const target = target0;
-          if (c.duel.outcome === 'pass' && target) {
-            say(`${c.driver.name} ${c.duel.inside ? 'goes down the inside of' : 'goes around the outside of'} ${target.driver.name} and takes the place.`, {
-              kind: 'overtake', car: c.id, player: c.isPlayer || target.isPlayer,
-            });
-            target.defending = 0; target.defendEnv = 0;
-            c.battleCooldown = 9; target.battleCooldown = 5;
-            // The switchback: better exit, better drive, and he has it back
-            // before the next corner. It is the best thing in racing.
-            const grit = (target.driver.skill ?? 0.85) * (target.driver.aggression ?? 0.75);
-            if (!c.duel.reply && rng.chance(0.06 + grit * 0.12)) {
-              target.duel = {
-                targetId: c.id, side: -c.duel.side, inside: !c.duel.inside, outcome: 'pass',
-                t: 0, dur: rng.range(1.5, 2.3), total: 13, shape: 0, reply: true, contact: false,
-              };
-              target.battleCooldown = 0;
-            }
-          } else if (target) {
-            if (rng.chance(0.35)) {
-              say(`${c.driver.name} has a look at ${target.driver.name} and cannot make it stick.`,
-                { kind: 'battle', car: c.id, player: c.isPlayer || target.isPlayer, priority: 'low' });
-            }
-            target.defending = 0; target.defendEnv = 0;
-          }
-          c.duel = null;
-        }
-      }
-
-      // Sector splits. The crossing point is interpolated inside the step so
-      // the times are real rather than rounded to the simulation tick.
       // Sector lines are places on the circuit, not fractions of the lap time,
       // so the boundary is converted into this car's phase before it is tested.
       // Tested against phase directly, every sector came out as exactly a third
@@ -1462,8 +1737,13 @@ export function createWeekend(opts) {
         if (!race.safetyCar && (c.bestLap == null || lapT < c.bestLap)) c.bestLap = lapT;
         if (!race.safetyCar && (!race.fastestLap || lapT < race.fastestLap.time)) {
           race.fastestLap = { time: lapT, car: c.id, driver: c.driver.name, lap: c.lap };
+          if (c.isPlayer) {
+            radioEng(c, `That is the fastest lap of the race — ${fmtLap(lapT)}.`, 'normal');
+            if (rng.chance(0.5)) radioDriver(c, 'ack');
+          }
         }
         considerPit(c);
+        radioWatch(c);
         if (c.lap >= totalLaps) {
           c.status = 'finished';
           c.raceTime = race.time;
@@ -1489,11 +1769,7 @@ export function createWeekend(opts) {
         const want = 22 + (i % 2) * 3;                 // metres, nose to nose
         const trueGap = (ahead.lap + posOf(ahead) - c.lap - posOf(c)) * track.length;
         if (trueGap <= want || trueGap > 900) continue;
-        const pull = Math.min(trueGap - want, 26 * dt);
-        const np = posOf(c) + pull / track.length;
-        if (np >= 1) { c.lap++; c.u = phaseOf(c, np - 1); }
-        else c.u = phaseOf(c, np);
-        c.distance = c.lap * track.length + c.u * track.length;
+        nudge(c, Math.min(trueGap - want, 26 * dt));
       }
     }
 

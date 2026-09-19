@@ -10,6 +10,7 @@ import { h, mount, panel, money, ordinal, modal, confirmDialog, teamBar, pct } f
 import { renderHub, renderCar, renderStandings, renderCalendar } from './ui/screens.js';
 import { renderFactory, renderFinance, renderTeam, developmentPending } from './ui/manage.js';
 import { renderWeekend } from './ui/weekend.js';
+import { renderCustomise, primeLiveries } from './ui/customise.js';
 import {
   newGame, saveGame, loadGame, hasSave, clearSave, exportSave, importSave,
   playerTeam, constructorsTable, constructorsPosition, isDismissed,
@@ -28,6 +29,7 @@ const TABS = [
   { id: 'finance', name: 'Finance' },
   { id: 'standings', name: 'Championship' },
   { id: 'calendar', name: 'Calendar' },
+  { id: 'customise', name: 'Customise' },
 ];
 
 const app = {
@@ -57,6 +59,7 @@ app.render = () => {
   const state = app.state;
   const team = playerTeam(state);
   document.documentElement.style.setProperty('--team', team.colors.primary);
+  primeLiveries(state);
 
   const table = constructorsTable(state);
   const pos = constructorsPosition(state, team.id);
@@ -87,6 +90,7 @@ app.render = () => {
   const screens = {
     hub: renderHub, weekend: renderWeekend, factory: renderFactory, car: renderCar,
     team: renderTeam, finance: renderFinance, standings: renderStandings, calendar: renderCalendar,
+    customise: renderCustomise,
   };
   (screens[app.tab] || renderHub)(app, main);
 };

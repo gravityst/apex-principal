@@ -38,6 +38,7 @@ The dependency arrow only ever points `ui → mgmt → data`. No module in `mgmt
 | | Also in `raceengine.js`: per-car `strategyMode` (`auto` = his own engineer, `manual` = you), `overrideUntilLap` so any command you give holds the engineer off for three laps, an ERS store, interpolated sector splits, and `currentSpeed()` read from the solved profile. |
 | `market.js` | The driver market: pay-offs, signing fees, buyouts, and the paddock's own moves between races. Reads nothing about the player's results when a rival changes driver. |
 | `season.js` | Round and season progression; the headless entry points. |
+| `customise.js` (ui) | Team and driver names, codes, colours, badges and uploaded liveries. Images are resized on the way in and live in the save. |
 
 ## The lap solver
 
@@ -139,7 +140,32 @@ Braking and throttle are not simulated, but they are implied: the rate of change
 
 ### An overtake
 
-`updateBattles()` decides whether one happens; `nextApex()` decides where. The move carries a total distance to be made up and spends it along `duelShape()` — a smootherstep, so it is slow out of the corner behind, quick on the brakes and settled by the exit. Spending it at a fixed rate per second, which is what it used to do, is why a pass looked like a car being dragged past. The defender is not a bystander: `defendEnv` moves him across to cover and eases him back. Contact is rolled once, at the apex. A completed pass can draw a switchback.
+`updateBattles()` decides whether one happens; `nextApex()` decides where.
+`startMove()` chooses the lanes — the defender covers the inside, so the
+attacker is often on the long way round — and `stepMove()` runs it: the closing
+speed is the attacker's real advantage in metres a second (pace, tow, DRS, grit,
+minus the defender), the overlap that produces at turn-in is compared against
+what that line needs (0.45 inside, 0.76 outside), and the corner is given to
+whoever has it. Backing out can become a switchback. `enforceSpacing()` grades
+the minimum longitudinal gap by the lateral separation, so two cars can be
+alongside but never inside one another.
+
+`nudge()` is the only way anything shifts a car along the circuit, and it
+refuses to cross the timing line — crossing it is the main loop's job, where the
+lap time, the sectors and the pit decision live. A nudge that wrapped `u` past
+one on its own left the car a lap down and it never completed another.
+
+`updateAir()` is both halves of following someone: `dirtyAir` costs time through
+`perGripLoss`, so the circuit decides how much it hurts, and `tow` gives some
+back where `straightness()` says there is speed to be had. Both scale with how
+far into the wake the car is laterally, so pulling alongside clears it.
+
+`updateDRS()` arms at the detection point and opens in the zone.
+
+The old system, for contrast: it picked the outcome up front and then moved the
+attacker at a fixed rate per second until the clock ran out. That is why a pass
+looked like one car being dragged past another, and why a "failed" attempt was
+just as scripted as a successful one. The move carries a total distance to be made up and spends it along `duelShape()` — a smootherstep, so it is slow out of the corner behind, quick on the brakes and settled by the exit. Spending it at a fixed rate per second, which is what it used to do, is why a pass looked like a car being dragged past. The defender is not a bystander: `defendEnv` moves him across to cover and eases him back. Contact is rolled once, at the apex. A completed pass can draw a switchback.
 
 One move at a time, per car: without that gate a car already committed to a pass opened another every time it crossed a detection point, and the order turned over three times a lap.
 

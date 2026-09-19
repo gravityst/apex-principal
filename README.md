@@ -58,6 +58,48 @@ Zoom on a scroll wheel or a pinch. Follow either driver, follow the leader, or p
 
 The simulation advances in quarter-second steps, but the renderer interpolates *between* them, so the cars move at constant velocity on screen rather than teleporting fourteen metres at a time. Measured over 1,500 frames, the frame-to-frame change in a car's speed has a median of 0.00% and a 99th percentile of 0.05%.
 
+### An overtake is a fight, not a swap
+
+Nothing about it is scripted. When a car gets within a second, the engine finds
+the next braking zone and works out how long the run to it is. The attacker sits
+in the tow — where he loses downforce in the corners and gains a slipstream on
+the straights — and only pulls out for the braking zone, because moving across
+early throws away the one thing that was going to get him there. What he closes
+in that time is whatever his advantage is actually worth: pace, tyre, tow, the
+DRS flap, minus how well the man in front defends.
+
+The overlap that produces at turn-in is what decides the corner. Down the inside
+a front wheel alongside is enough; round the outside it is not, and if he has
+not got there he has to lift. The defender is not a bystander — he covers the
+inside when he sees it coming, which is why the attacker often ends up on the
+long way round. A move that does not stick can cross back and go again on the
+exit. Two cars alongside at the apex sometimes touch.
+
+And they cannot drive through each other. How close one car may get to another
+is a function of how far across the road it is: fully alongside, a couple of
+metres; on the same line, a car's length and a bit; and everything in between
+graded, because half a car's width of overlap is exactly where two cars end up
+occupying the same piece of road.
+
+### Air
+
+Following someone costs you downforce, which costs you the corners — measured
+through the same grip sensitivity the lap solver already computes, so a slow,
+twisty circuit punishes it far more than a fast one. The tow gives some of it
+back on the straights and never all of it. Net, following is a loss, which is
+why a train forms behind a car nobody can pass and why DRS exists at all.
+
+Drivers behave accordingly. A rival stuck in someone's wake with no way past
+will drop back out of it, cool the car and come again with a run. A rival with
+somebody in his mirrors puts his head down and tries to break the tow before it
+matters.
+
+### DRS
+
+There is a detection point before every zone. You are only given the flap if you
+were inside a second at that line, which is why a clever defender will sometimes
+back off to lose the detection. When it opens, the rear wing opens with it.
+
 An overtake is aimed at a corner. When a move starts, the engine finds the next braking zone, works out how long it takes to get there, and spends the whole distance along a curve that is slow out of the corner behind, quick on the brakes and settled by the exit. The man in front moves across to cover and eases back as it resolves. Sometimes they touch. Sometimes he gets it back on the exit, which is the best thing in racing.
 
 Overtakes happen the same way. A move is a manoeuvre with a side, a closing rate and two to four seconds to complete it, so the cars go wheel to wheel and the place changes while both are moving. When it does not come off, he draws alongside and has to concede. And when somebody locks a wheel, runs through the gravel or spins it, you see the smoke.
@@ -96,6 +138,22 @@ Above them sits one sentence saying what it all implies — *"Undercut is on: 2.
 
 ## Team radio
 
+It is on the track, not behind a tab: the newest four messages sit over the
+circuit on the left, newest on top, each with the lap and the time it was said,
+and none of it takes a click or covers a control. The full log is one tap away.
+
+Two of the four voices are yours and they do not sound alike. The **engineer**
+has the numbers — gaps, intervals, tyre life, what the car behind is on — and he
+volunteers them: the tyre going through sixty and then eighty percent, a rival
+two seconds back on fresher rubber and what to do about it, the overcut if the
+man in front has not stopped, the last lap. The **driver** has the car, and he
+is short with you: *"He shut the door. I had to lift."* — *"Copy. Leave me to
+it."*
+
+Everything either of them says is triggered by something that actually happened
+in the simulation. When the overtake system commits a car to the inside, the
+radio says so as it happens; when the move fails, it says that too.
+
 Four voices, each one styled and labelled so you can tell them apart at a glance:
 
 - **ENGINEER** — your own pit wall: pit windows, undercuts, fuel, the car behind that has just stopped on fresh rubber
@@ -132,6 +190,14 @@ Twenty cars at full detail is about six hundred draw calls a frame and no phone 
 ## On a phone
 
 Held upright. The 3D takes the screen, the chrome above it shrinks to the name and the way out, the timing tower steps aside, one driver's deck at a time swipes across, and the camera and view controls collapse to a button each that cycles. Pinch to zoom.
+
+## Making it yours
+
+A **Customise** tab, for your team and for the other nine. Team name, three
+letter code and colours; each driver's name, code and number; a badge; and a
+livery you upload — a square image wrapped down the flank of the car and
+mirrored across it, which is exactly what a Monoposto template is. It all goes
+into the save, so it survives a reload and travels with an export.
 
 ## Running it
 
