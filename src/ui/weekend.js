@@ -58,6 +58,33 @@ export function renderWeekend(app, root) {
   if (app.phase === 'result') return renderResult(app, root, race, round);
 }
 
+/**
+ * Wrap a session action so it cannot fail silently.
+ *
+ * Every button that moves a weekend on — run practice, run qualifying, lights
+ * out — does real work before it redraws. If any of that throws, the click
+ * handler dies where it stands and the screen simply does not change: the
+ * button looks broken, nothing is logged where a player can see it, and there
+ * is no way to tell a dead button from one that did nothing on purpose.
+ *
+ * One bad save was enough to cause it. `spend()` pushes to player.ledger, so a
+ * save missing that array threw on the first practice programme that cost
+ * money. Repairing the save fixes that case; this makes sure the next one
+ * announces itself instead of pretending the button does not work.
+ */
+function act(app, what, fn) {
+  return () => {
+    try {
+      fn();
+    } catch (e) {
+      console.error(`[apex] ${what} failed`, e);
+      alert(`Something went wrong ${what}.\n\n${e && e.message ? e.message : e}\n\n`
+        + 'The weekend has not moved on. If this keeps happening, export the save '
+        + 'from the menu — the file will say what state the career is in.');
+    }
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Practice
 // ---------------------------------------------------------------------------
@@ -92,13 +119,13 @@ function renderPractice(app, root, race, round) {
       h('div', { class: 'btnrow', style: { marginTop: '10px' } },
         h('button', {
           class: 'btn primary',
-          onClick: () => {
-            const opt = PRACTICE_OPTIONS[app.practiceSpend];
+          onClick: act(app, 'running practice', () => {
+            const opt = PRACTICE_OPTIONS[app.practiceSpend] || PRACTICE_OPTIONS[0];
             if (opt.cost) spend(state, opt.cost, `${round.name} practice programme`, 'operating');
-            race.runPractice(app.practiceSpend / 2);
+            race.runPractice((PRACTICE_OPTIONS.indexOf(opt)) / 2);
             app.phase = 'qualifying';
             app.save(); app.render();
-          },
+          }),
         }, 'Run practice →'))),
     h('div', { class: 'grid' },
       panel('Forecast', null,
@@ -129,7 +156,7 @@ function renderQualifying(app, root, race, round) {
       h('div', { class: 'btnrow', style: { marginTop: '14px' } },
         h('button', {
           class: 'btn primary',
-          onClick: () => { race.runQualifying(); app.save(); app.render(); },
+          onClick: act(app, 'running qualifying', () => { race.runQualifying(); app.save(); app.render(); }),
         }, 'Run qualifying →'))));
     return;
   }
@@ -156,7 +183,7 @@ function renderQualifying(app, root, race, round) {
       panel(null, null,
         h('button', {
           class: 'btn primary', style: { width: '100%' },
-          onClick: () => { app.phase = 'grid'; app.render(); },
+          onClick: act(app, 'going to the grid', () => { app.phase = 'grid'; app.render(); }),
         }, 'To the grid →')))));
 }
 
@@ -187,22 +214,22 @@ function renderGrid(app, root, race, round) {
       h('div', { class: 'btnrow', style: { marginTop: '16px' } },
         h('button', {
           class: 'btn primary',
-          onClick: () => {
+          onClick: act(app, 'starting the race', () => {
             race.startRace(app.startTyres);
             app.phase = 'race';
             app.speed = 2;
             app.render();
-          },
+          }),
         }, 'Lights out →'),
         h('button', {
           class: 'btn',
-          onClick: () => {
+          onClick: act(app, 'simulating the race', () => {
             race.startRace(app.startTyres);
             race.autoStrategy = true;
             race.simulateToEnd();
             app.phase = 'result';
             app.render();
-          },
+          }),
         }, 'Simulate the race instead'))),
     h('div', { class: 'grid' },
       panel('Weather', null,

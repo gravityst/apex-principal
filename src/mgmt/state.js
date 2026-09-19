@@ -363,19 +363,44 @@ function repair(s) {
   // build, which is a blank screen and a button that does nothing.
   s.round = Math.max(0, Math.min(s.calendar.length, Number.isFinite(s.round) ? s.round : 0));
 
-  s.player = s.player && typeof s.player === 'object' ? s.player : {};
-  if (!Number.isFinite(s.player.balance)) s.player.balance = 0;
-  if (!Number.isFinite(s.player.reputation)) s.player.reputation = 0.5;
-  if (!Number.isFinite(s.player.developedForRound)) s.player.developedForRound = -1;
-  if (!s.player.allocation || typeof s.player.allocation !== 'object') {
-    s.player.allocation = defaultAllocation();
-  }
+  // Every field the rest of the game writes to without checking. A missing
+  // array here is not a cosmetic gap: `spend()` does `player.ledger.push(...)`,
+  // so a save without a ledger has a Run Practice button that throws the
+  // moment you choose a programme that costs money — and a button that throws
+  // is a button that does nothing at all, with no error anyone can see.
+  const p = s.player && typeof s.player === 'object' ? s.player : {};
+  s.player = p;
+  if (!Number.isFinite(p.balance)) p.balance = 0;
+  if (!Number.isFinite(p.reputation)) p.reputation = 0.5;
+  if (!Number.isFinite(p.developedForRound)) p.developedForRound = -1;
+  if (!Number.isFinite(p.seasonSpend)) p.seasonSpend = 0;
+  if (!Array.isArray(p.ledger)) p.ledger = [];
+  if (!Array.isArray(p.sponsors)) p.sponsors = [];
+  if (!Array.isArray(p.sponsorMarket)) p.sponsorMarket = [];
+  if (!Array.isArray(p.inbox)) p.inbox = [];
+  if (p.lastReport === undefined) p.lastReport = null;
+  p.seasonStats = {
+    podiums: 0, wins: 0, pointsFinishes: 0, poles: 0, dnfs: 0,
+    ...(p.seasonStats && typeof p.seasonStats === 'object' ? p.seasonStats : {}),
+  };
+  if (!p.allocation || typeof p.allocation !== 'object') p.allocation = defaultAllocation();
   for (const id of AREA_IDS) {
-    if (!Number.isFinite(s.player.allocation[id])) s.player.allocation[id] = 1 / AREA_IDS.length;
+    if (!Number.isFinite(p.allocation[id])) p.allocation[id] = 1 / AREA_IDS.length;
   }
 
   if (!Array.isArray(s.news)) s.news = [];
   if (!Array.isArray(s.results)) s.results = [];
+  if (!Array.isArray(s.history)) s.history = [];
+  if (!Number.isFinite(s.week)) s.week = 0;
+  if (!s.standings || typeof s.standings !== 'object') s.standings = { constructors: {}, drivers: {} };
+  if (!s.standings.constructors || typeof s.standings.constructors !== 'object') s.standings.constructors = {};
+  if (!s.standings.drivers || typeof s.standings.drivers !== 'object') s.standings.drivers = {};
+  for (const t of s.teams) {
+    if (!Number.isFinite(s.standings.constructors[t.id])) s.standings.constructors[t.id] = 0;
+    for (const d of (t.drivers || [])) {
+      if (!Number.isFinite(s.standings.drivers[d.id])) s.standings.drivers[d.id] = 0;
+    }
+  }
 
   for (const t of s.teams) {
     if (!t.spec || typeof t.spec !== 'object') t.spec = makeSpec(56);
