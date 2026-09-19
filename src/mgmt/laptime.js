@@ -287,3 +287,64 @@ export function areaValue(track, spec, toPhysics, areaIds, cond = {}) {
   }
   return out;
 }
+
+
+/**
+ * Where a car actually is, given how much of the lap's TIME it has used.
+ *
+ * The race engine advances a car by `dt / lapTime`, which is a fraction of the
+ * lap's time. That is the right quantity for gaps and for the order, and the
+ * wrong one for a position: a car spends far more time per metre in a hairpin
+ * than it does on the straight. Without this mapping the car takes the hairpin
+ * at exactly the same metres per second as the main straight, which is what
+ * makes it look like it is on rails rather than driving.
+ *
+ * So invert the speed profile once: cumulative time at each sample, resampled
+ * onto a uniform grid of lap phase. `lapPos` turns a phase into a place;
+ * `lapPhase` turns a place back into a phase.
+ *
+ * ONE map serves the whole field. Building it per car looks harmless — the
+ * profiles differ only slightly — but a tenth of a percent of disagreement is
+ * six metres, and six metres is the difference between a grid slot and two cars
+ * occupying the same piece of road.
+ */
+export function phaseMap(trackLength, speeds) {
+  const n = speeds.length;
+  const ds = trackLength / n;
+  const tCum = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) {
+    const a = Math.max(1, speeds[i]);
+    const b = Math.max(1, speeds[(i + 1) % n]);
+    tCum[i + 1] = tCum[i] + (2 * ds) / (a + b);
+  }
+  const total = tCum[n] || 1;
+
+  const GRID = 2048;
+  const grid = new Float64Array(GRID + 1);
+  let j = 0;
+  for (let m = 0; m <= GRID; m++) {
+    const want = (m / GRID) * total;
+    while (j < n - 1 && tCum[j + 1] < want) j++;
+    const span = tCum[j + 1] - tCum[j] || 1;
+    grid[m] = Math.min(1, (j + (want - tCum[j]) / span) / n);
+  }
+  grid[GRID] = 1;
+
+  return {
+    /** phase in [0,1) -> fraction of the lap's length */
+    lapPos(phase) {
+      const f = ((phase % 1) + 1) % 1;
+      const x = f * GRID;
+      const i = Math.min(GRID - 1, Math.floor(x));
+      return grid[i] + (grid[i + 1] - grid[i]) * (x - i);
+    },
+    /** fraction of the lap's length -> phase in [0,1) */
+    lapPhase(dist) {
+      const f = ((dist % 1) + 1) % 1;
+      const x = f * n;
+      const i = Math.min(n - 1, Math.floor(x));
+      const t = tCum[i] + (tCum[i + 1] - tCum[i]) * (x - i);
+      return Math.min(1, t / total);
+    },
+  };
+}

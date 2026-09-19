@@ -129,7 +129,10 @@ export function renderRaceScreen(app, root, race, round) {
   // The stage is the page: whatever the chrome above it leaves, it takes.
   function fitHeight() {
     const top = wrap.getBoundingClientRect().top + window.scrollY;
-    wrap.style.height = `${Math.max(460, window.innerHeight - top)}px`;
+    // A host page may pad the root by the phone's safe-area insets; the bottom
+    // one is not in `top`, so take it off explicitly or the dock sits under it.
+    const pad = parseFloat(getComputedStyle(document.documentElement).paddingBottom) || 0;
+    wrap.style.height = `${Math.max(440, window.innerHeight - top - pad)}px`;
   }
 
   function setFilter(f) {
@@ -180,6 +183,9 @@ export function renderRaceScreen(app, root, race, round) {
     scene.setMode(app.camMode || 'top');
     scene.setZoom(app.camZoom || 48);
     scene.setTilt(app.camTilt ?? 0.22);
+    // Lap phase is what the simulation steps in; the circuit is measured in
+    // metres. The engine owns the mapping, so hand it to the view.
+    scene.setWarp(race.lapPos);
   } else {
     canvas3d.style.display = 'none';
     canvas2d.style.display = 'block';
@@ -657,6 +663,16 @@ function makeCarDeck(race, c) {
   const actRow = h('div', { class: 'dact' },
     h('div', { class: 'split' }, boxBtn, boxMore), pushBtn, ersBtn);
 
+  // Tyre health, on the deck rather than behind a tab. It is the one number
+  // every call on this screen comes back to.
+  const tyreFill = h('i', {});
+  const tyreLife = h('span', { class: 'tl mono' });
+  const tyreNote = h('span', { class: 'tn' });
+  const tyreRow = h('div', { class: 'dtyre' },
+    tyreEl,
+    h('div', { class: 'tbar' }, tyreFill),
+    tyreLife, tyreNote);
+
   const tray = h('div', { class: 'dtray', style: { display: 'none' } });
   const noteEl = h('div', { class: 'dnote' });
   const outEl = h('div', { class: 'dout', style: { display: 'none' } });
@@ -664,8 +680,8 @@ function makeCarDeck(race, c) {
   const el = h('div', { class: 'deck' },
     h('div', { class: 'dhd' },
       h('i', { style: { background: c.team.colors.primary } }),
-      posEl, nameEl, tyreEl, h('span', { class: 'spacer' }), seg),
-    telem, actRow, tray, noteEl, outEl);
+      posEl, nameEl, h('span', { class: 'spacer' }), seg),
+    tyreRow, telem, actRow, tray, noteEl, outEl);
 
   let lastCompounds = '';
   const pitBtns = {};
@@ -700,18 +716,31 @@ function makeCarDeck(race, c) {
       el.className = 'deck out';
       telem.style.display = 'none'; actRow.style.display = 'none';
       tray.style.display = 'none'; noteEl.style.display = 'none';
-      tyreEl.style.display = 'none';
+      tyreRow.style.display = 'none';
       outEl.style.display = '';
       outEl.textContent = `Out of the race — ${c.retireReason}.`;
       return;
     }
     el.className = `deck ${c.defiance > 0 ? 'angry' : ''}`;
     telem.style.display = ''; actRow.style.display = ''; outEl.style.display = 'none';
-    tyreEl.style.display = '';
+    tyreRow.style.display = '';
 
     const cmp = TYRE_COMPOUNDS[c.tyre];
-    tyreEl.textContent = `${cmp?.short || '?'} ${Math.floor(c.tyreAge)}`;
+    tyreEl.textContent = cmp?.short || '?';
     tyreEl.className = `dty ty-${c.tyre}`;
+
+    const brief = c.status === 'running' ? strategyBrief(race, c) : null;
+    const wear = brief ? brief.tyre.wear : Math.min(1, c.wear ?? 0);
+    const life = Math.max(0, Math.min(1, 1 - wear));
+    tyreFill.style.width = `${(life * 100).toFixed(0)}%`;
+    tyreFill.style.background = wear > 0.92 ? 'var(--bad)' : wear > 0.72 ? 'var(--warn)' : 'var(--good)';
+    tyreLife.textContent = `${(life * 100).toFixed(0)}%`;
+    tyreLife.className = `tl mono ${wear > 0.92 ? 'bad' : wear > 0.72 ? 'warn' : ''}`;
+    tyreNote.textContent = brief
+      ? `${cmp?.name || ''} · ${Math.floor(c.tyreAge)} laps · `
+        + (brief.tyre.pastCliff ? 'past the cliff' : `${brief.tyre.lapsUsable.toFixed(0)} usable left`)
+      : `${cmp?.name || ''} · ${Math.floor(c.tyreAge)} laps`;
+    tyreNote.className = `tn ${brief && brief.tyre.pastCliff ? 'bad' : ''}`;
 
     const auto = c.strategyMode === 'auto';
     engBtn.className = `segbtn ${auto ? 'on' : ''}`;
@@ -812,7 +841,7 @@ function makeCarDeck(race, c) {
     }
 
     // Kept on the deck so the callout can read it without recomputing.
-    deck.brief = c.status === 'running' ? strategyBrief(race, c) : null;
+    deck.brief = brief;
   }
 
   const deck = { el, update, car: c, brief: null };

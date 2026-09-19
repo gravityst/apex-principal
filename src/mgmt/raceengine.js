@@ -13,7 +13,8 @@
  */
 
 import { TYRE_COMPOUNDS } from '../data/teams.js';
-import { lapModel } from './laptime.js';
+import { racingLine as racingLineFor } from './track.js';
+import { lapModel, phaseMap } from './laptime.js';
 import { toPhysics } from './carspec.js';
 import { driverPace, driverWearFactor, complianceChance, REFUSAL_LINES } from './personnel.js';
 import { pitStopTime } from './facilities.js';
@@ -135,6 +136,10 @@ export function createWeekend(opts) {
     autoStrategy,
   };
 
+  // Lap phase <-> place on the circuit. Filled in once the first car has been
+  // solved; see `posOf` below for what it is for.
+  let MAP = null;
+
   // ---- build the cars ----------------------------------------------------
   const fuelPerLap = 0.335 * (track.length / 1000);
   for (const e of entries) {
@@ -201,6 +206,9 @@ export function createWeekend(opts) {
       // This is simulation state, not a rendering flourish: an overtake IS a
       // change of line, and it has to happen over seconds like a real one.
       lateral: 0,
+      // A driver's own small bias off the ideal line, so twenty cars are not
+      // one car drawn twenty times.
+      lineBias: rng.normal(0, 0.30),
       duel: null,
       interval: 0,
       gapToLeader: 0,
@@ -208,6 +216,10 @@ export function createWeekend(opts) {
       quali: null,
     });
   }
+
+  // One phase map for the whole field, from the first car's solved profile.
+  MAP = phaseMap(track.length, race.cars[0].model.speeds);
+
 
   // ---- helpers -----------------------------------------------------------
 
@@ -297,13 +309,38 @@ export function createWeekend(opts) {
   function currentSpeed(c) {
     const prof = c.model.speeds;
     if (!prof || !prof.length) return track.length / Math.max(50, currentLapTime(c));
-    const f = ((c.u % 1) + 1) % 1;
+    const f = posOf(c);
     const v = prof[Math.min(prof.length - 1, Math.floor(f * prof.length))];
     if (c.status === 'pit') return pit.speedLimit || 22.2;
     const scale = c.model.base / Math.max(1, currentLapTime(c));
     return v * scale;
   }
   race.currentSpeed = currentSpeed;
+
+  /**
+   * `c.u` is lap PHASE — the fraction of the lap's time the car has used, which
+   * is what advancing by `dt / lapTime` produces. It is the right quantity for
+   * gaps and for the order, and the wrong one for a position: a car spends far
+   * more time per metre in a hairpin than on the straight. `posOf` maps phase
+   * through the solved speed profile to the fraction of the lap's LENGTH, which
+   * is what the circuit's geometry — corners, kerbs, DRS zones, the pit entry —
+   * is indexed by, and what the view draws. `phaseOf` is the inverse.
+   *
+   * The map is built once, from one car, and every car on the circuit uses it.
+   * See `phaseMap`: per-car maps disagree by enough to put two cars in the same
+   * piece of road.
+   */
+  function posOf(c, phase) {
+    const p = phase == null ? (c ? c.u : 0) : phase;
+    return MAP ? MAP.lapPos(p) : ((p % 1) + 1) % 1;
+  }
+  function phaseOf(c, dist) {
+    return MAP ? MAP.lapPhase(dist) : ((dist % 1) + 1) % 1;
+  }
+  race.posOf = posOf;
+  race.phaseOf = phaseOf;
+  /** For the view, which has no car to ask. */
+  race.lapPos = (phase) => posOf(null, phase);
 
   /** Gap in seconds to the car behind, or null if last. */
   race.gapBehind = (c) => {
@@ -468,10 +505,15 @@ export function createWeekend(opts) {
       // The grid sits just past the timing line, pole furthest up the road.
       // Every car then completes the same number of line crossings, so the
       // eight metres a slot is a real advantage and nothing else moves.
-      c.u = (grid.length - c.gridPos) * (8 / track.length);
+      c.u = phaseOf(c, (grid.length - c.gridPos) * (8 / track.length));
       c.prevU = c.u;
-      // The grid is two-by-two, staggered across the track.
-      c.lateral = (c.gridPos % 2 === 1 ? -1 : 1) * 2.4;
+      // The grid is two-by-two, staggered across the track, and they hold
+      // those two columns until the launch has been paid out — which is what
+      // lets a good getaway stream past the car in front instead of queueing
+      // behind it.
+      c._gridSide = c.gridPos % 2 === 1 ? -1 : 1;
+      c.lateral = c._gridSide * 2.4;
+      c._launch = 0;
       c.duel = null; c.defending = 0;
       c.distance = c.u * track.length;
       c.tyre = c.isPlayer && playerTyres[c.id] ? playerTyres[c.id] : pickStartTyre(c, openers);
@@ -493,6 +535,7 @@ export function createWeekend(opts) {
     say(`Lights out at ${circuit.name}. ${totalLaps} laps.`, { kind: 'race' });
     // The start itself: a place where aggression and a good launch matter.
     resolveStart(grid);
+    enforceSpacing();
     updateOrder();
     return grid;
   };
@@ -506,14 +549,14 @@ export function createWeekend(opts) {
   }
 
   function resolveStart(grid) {
+    const quality = new Map();
     for (const c of grid) {
-      const launch = rng.normal(0, 1)
+      quality.set(c, rng.normal(0, 1)
         + (c.driver.aggression ?? 0.75) * 0.9
         + (c.driver.skill ?? 0.85) * 0.7
-        - weather.wetness * 0.5;
-      c._launch = launch;
+        - weather.wetness * 0.5);
     }
-    const sorted = grid.slice().sort((a, b) => (b._launch - a._launch));
+    const sorted = grid.slice().sort((a, b) => quality.get(b) - quality.get(a));
     // Convert launch quality into a few metres either way, which the normal
     // running order then resolves into actual places. It has to move `u`:
     // `distance` is recomputed from `u` on every step.
@@ -521,9 +564,14 @@ export function createWeekend(opts) {
       // Clamped: a start is worth a few car lengths, not half the grid. How
       // many places that turns into is decided by the running order, so the
       // radio does not claim a number that has not happened yet.
+      //
+      // And it is PAID OUT over the first few seconds rather than applied at
+      // the lights. Applied at once it was a teleport of up to twenty metres —
+      // two and a half grid slots — which is how a car that qualified fifth
+      // ended up leading, inside the car that qualified on pole, before anyone
+      // had moved.
       const gain = Math.max(-6, Math.min(6, (sorted.indexOf(c) - grid.indexOf(c)) * -1));
-      c.u = Math.max(0, c.u + (gain * 3.4) / track.length);
-      c.distance = c.u * track.length;
+      c._launch = gain * 3.4;              // metres still owed, either way
       if (gain >= 4 && c.isPlayer) say(`Blinding launch from ${c.driver.name} — he is all over the car in front already.`, { kind: 'race', car: c.id, player: true });
       else if (gain <= -4 && c.isPlayer) say(`Poor getaway for ${c.driver.name}. He is swamped off the line.`, { kind: 'race', car: c.id, player: true });
     }
@@ -579,12 +627,8 @@ export function createWeekend(opts) {
   };
 
   /** The line a car would take if nobody else were on the circuit. */
-  function racingLine(u) {
-    const i = trackAt(u);
-    const k = track.curv[i];
-    const w = track.width[i];
-    return Math.max(-w * 0.55, Math.min(w * 0.55, -Math.sign(k) * Math.min(w * 0.45, Math.abs(k) * 2600)));
-  }
+  const LINE = racingLineFor(track);
+  function racingLine(u) { return LINE[trackAt(u)]; }
 
   /**
    * Move the car across the track. Cars do not jump sideways, so the lateral
@@ -592,7 +636,8 @@ export function createWeekend(opts) {
    * is roughly how long a switch of line actually takes.
    */
   function updateLateral(c, dt) {
-    const i = trackAt(c.u);
+    const p = posOf(c);
+    const i = trackAt(p);
     const w = track.width[i];
     let target;
 
@@ -602,17 +647,66 @@ export function createWeekend(opts) {
       // Alongside: far enough over to be a second car abreast, and eased in
       // and out so the move reads as a move.
       const shape = Math.sin(Math.PI * Math.min(1, c.duel.t / c.duel.dur));
-      target = racingLine(c.u) + c.duel.side * Math.min(w * 0.62, 3.1) * Math.max(0.35, shape);
+      target = racingLine(p) + c.duel.side * Math.min(w * 0.62, 3.1) * Math.max(0.35, shape);
+    } else if (c._launch) {
+      target = (c._gridSide || 1) * Math.min(w * 0.44, 2.6);
     } else if (c.defending) {
-      target = racingLine(c.u) + c.defending * Math.min(w * 0.45, 2.1);
+      target = racingLine(p) + c.defending * Math.min(w * 0.45, 2.1);
     } else {
-      target = racingLine(c.u);
+      // Twenty cars on one ideal line is a train, not a race. Each driver has
+      // his own small bias, and a car sitting in someone's wake edges out of it
+      // towards wherever the next corner is going to want him.
+      target = racingLine(p) + c.lineBias;
+      if (c.dirtyAir > 0.3) {
+        const nextK = track.curv[trackAt(p + 0.012)];
+        const side = Math.abs(nextK) > 0.002 ? (nextK > 0 ? -1 : 1) : (c.lineBias >= 0 ? 1 : -1);
+        target += side * Math.min(w * 0.30, 1.5) * Math.min(1, (c.dirtyAir - 0.3) * 2.2);
+      }
     }
     target = Math.max(-w + 1.1, Math.min(w - 1.1, target));
 
-    const rate = 4.2 * dt;                      // metres a second across the track
+    // How fast a car can change line is a function of how fast it is going: a
+    // fixed rate either slides at 60km/h or cannot make the turn-in at 280.
+    // A tenth of forward speed is about six degrees of yaw, which is right.
+    const rate = Math.max(2.5, Math.min(9, (c.speed || 60) * 0.10)) * dt;
     const d = target - c.lateral;
     c.lateral += Math.abs(d) < rate ? d : Math.sign(d) * rate;
+  }
+
+  /**
+   * Cars cannot drive through each other.
+   *
+   * The simulation resolves an overtake as a manoeuvre, which takes seconds —
+   * so between deciding and completing one, a faster car is closing on a slower
+   * one and nothing stopped it ending up inside the bodywork. Holding it a car's
+   * length back is not a cosmetic fix: queueing behind somebody you cannot pass
+   * is most of what a race actually is, and the dirty-air penalty that goes with
+   * it is already in the lap time.
+   *
+   * Two cars side by side are not stacked, so the limit relaxes as soon as they
+   * are more than a car's width apart across the road — which is what lets the
+   * grid line up in staggered rows eight metres apart, and what lets a move
+   * happen at all.
+   */
+  function enforceSpacing() {
+    const list = race.cars.filter((c) => c.status === 'running');
+    list.sort((a, b) => b.distance - a.distance);
+    for (let i = 1; i < list.length; i++) {
+      const ahead = list[i - 1], c = list[i];
+      if (c.duel || ahead.duel) continue;                 // alongside, or going by
+      const pa = ahead.lap + posOf(ahead);
+      const pc = c.lap + posOf(c);
+      const gap = (pa - pc) * track.length;
+      if (gap > 12 || gap < 0) continue;
+      const need = Math.abs(ahead.lateral - c.lateral) > 2.6 ? 2.2 : 7.0;
+      if (gap >= need) continue;
+      // Hold him back, but never push him across the timing line backwards.
+      const back = (need - gap) / track.length;
+      const pos = posOf(c) - back;
+      if (pos <= 0.0008) continue;
+      c.u = phaseOf(c, pos);
+      c.distance = c.lap * track.length + c.u * track.length;
+    }
   }
 
   // ---- incidents ---------------------------------------------------------
@@ -703,15 +797,20 @@ export function createWeekend(opts) {
 
       const gap = c.interval;
       c.dirtyAir = gap < 1.6 ? Math.min(1, (1.6 - gap) / 1.6) : 0;
-      c.drs = !race.safetyCar && gap < 1.0 && drsZones.some((z) => inZone(c.u, z)) && weather.wetness < 0.3;
+      c.drs = !race.safetyCar && gap < 1.0 && drsZones.some((z) => inZone(posOf(c), z)) && weather.wetness < 0.3;
 
       if (c.battleCooldown > 0) { c.battleCooldown -= dt; continue; }
       if (race.safetyCar || gap > 0.9) continue;
 
       // An attempt is only resolved at the end of a DRS zone or a big braking
       // zone; this is checked once per pass through that point, not per tick.
-      const zone = drsZones.find((z) => inZone(c.u, z));
-      if (!zone) { c._armed = true; continue; }
+      // On the opening lap every corner is an opportunity, because it is: the
+      // field is bunched, nobody has clean air, and everyone is still on the
+      // tyres and the fuel they started with.
+      const firstLap = c.lap < 1;
+      const atCorner = firstLap && Math.abs(track.curv[trackAt(posOf(c))]) > 0.004;
+      const zone = drsZones.find((z) => inZone(posOf(c), z));
+      if (!zone && !atCorner) { c._armed = true; continue; }
       if (!c._armed) continue;
       c._armed = false;
 
@@ -725,15 +824,16 @@ export function createWeekend(opts) {
       // A car that is not actually faster does not get past. Without this a
       // train of evenly matched cars shuffles itself every lap and qualifying
       // stops meaning anything.
-      if (paceDelta < -0.10 && !c.drs) { c.battleCooldown = 4; continue; }
+      if (paceDelta < -0.10 && !c.drs && !firstLap) { c.battleCooldown = 4; continue; }
 
-      const score = paceDelta * 1.05 + tyreDelta * 0.42 + drsBonus + (attack - defend) * 0.75 + (0.9 - gap) * 0.55;
+      const score = paceDelta * 1.05 + tyreDelta * 0.42 + drsBonus + (attack - defend) * 0.75 + (0.9 - gap) * 0.55
+        + (firstLap ? 0.26 : 0);
       // Overtaking an evenly matched car is genuinely hard. The offset is what
       // makes track position worth something and a pit call a real decision.
       const p = 1 / (1 + Math.exp(-score * 1.9)) - 0.45;
 
       // Which side he goes down: the inside of whatever is coming next.
-      const nextK = track.curv[trackAt(c.u + 0.02)];
+      const nextK = track.curv[trackAt(posOf(c) + 0.02)];
       const side = Math.abs(nextK) > 0.002 ? (nextK > 0 ? -1 : 1) : (ahead.lateral > 0 ? -1 : 1);
 
       if (rng.chance(Math.max(0, p))) {
@@ -816,7 +916,7 @@ export function createWeekend(opts) {
     const stop = pitStopTime(c.facilities || { pitcrew: 3 }, crewRng);
     c.status = 'pit';
     c.pitRemaining = pitTransit + stop.time + c.penalty;
-    c.pitFrom = c.u;
+    c.pitFrom = posOf(c);
     c._pitTotal = c.pitRemaining;
     c._newTyre = c.pitRequested;
     c._fumble = stop.fumble;
@@ -838,7 +938,7 @@ export function createWeekend(opts) {
     c.tyreAge = 0;
     c.stops++;
     c.stintStart = c.lap;
-    c.u = pit.exit;
+    c.u = phaseOf(c, pit.exit);
   }
 
   // ---- pit wall commands -------------------------------------------------
@@ -997,7 +1097,8 @@ export function createWeekend(opts) {
         // Show the car creeping down the pit lane while it is in there.
         const done = 1 - Math.max(0, c.pitRemaining) / Math.max(0.01, c._pitTotal);
         const span = ((pit.exit - c.pitFrom) % 1 + 1) % 1;
-        const nu = (c.pitFrom + span * done) % 1;
+        const np = (c.pitFrom + span * done) % 1;
+        const nu = phaseOf(c, np);
         if (nu < c.u) c.lap++;             // crossed the line inside the pit lane
         c.u = nu;
         c.distance = c.lap * track.length + c.u * track.length;
@@ -1040,6 +1141,34 @@ export function createWeekend(opts) {
       const prevU = c.u;
       c.u += dLap;
 
+      // The start: the launch is worth a few car lengths and they arrive over
+      // the first seconds, so the places change while the cars are moving.
+      if (c._launch) {
+        const take = c._launch * (1 - Math.exp(-dt / 2.2));
+        c._launch -= take;
+        if (Math.abs(c._launch) < 0.05) c._launch = 0;
+        c.u = phaseOf(c, Math.max(0, posOf(c) + take / track.length));
+
+        // A launch that has run out of road is a move, not a queue. The
+        // manoeuvre system already knows how to put one car alongside another,
+        // so a good getaway uses it rather than driving through the man ahead.
+        if (c._launch > 0.6 && !c.duel && c.battleCooldown <= 0) {
+          const ord = race.order || race.cars;
+          const ahead = ord[ord.indexOf(c) - 1];
+          if (ahead && ahead.status === 'running' && !ahead.duel) {
+            const gapM = (ahead.lap + posOf(ahead) - c.lap - posOf(c)) * track.length;
+            if (gapM > 0 && gapM < 22) {
+              const dur = rng.range(1.7, 2.9);
+              c.duel = {
+                targetId: ahead.id, side: c._gridSide || 1, outcome: 'pass',
+                t: 0, dur, rate: (gapM + 9) / dur, announced: false,
+              };
+              ahead.battleCooldown = 1.6;
+            }
+          }
+        }
+      }
+
       // A move in progress: the attacker carries extra speed out of the tow,
       // eased in and out, so the places change while the cars are moving
       // rather than between one frame and the next.
@@ -1067,9 +1196,13 @@ export function createWeekend(opts) {
 
       // Sector splits. The crossing point is interpolated inside the step so
       // the times are real rather than rounded to the simulation tick.
+      // Sector lines are places on the circuit, not fractions of the lap time,
+      // so the boundary is converted into this car's phase before it is tested.
+      // Tested against phase directly, every sector came out as exactly a third
+      // of the lap.
       const bounds = circuit.sectors || [0.333, 0.666];
       for (let sIdx = 0; sIdx < bounds.length; sIdx++) {
-        const bnd = bounds[sIdx];
+        const bnd = phaseOf(c, bounds[sIdx]);
         if (prevU < bnd && c.u >= bnd && c._sectorMark <= sIdx) {
           const frac = (bnd - prevU) / Math.max(1e-9, c.u - prevU);
           const at = race.time - dt + dt * frac;
@@ -1079,8 +1212,8 @@ export function createWeekend(opts) {
       }
 
       // Pit entry.
-      if (c.pitRequested && crossed(prevU, c.u, pit.entry)) {
-        c.u = pit.entry;
+      if (c.pitRequested && crossed(posOf(c, prevU), posOf(c), pit.entry)) {
+        c.u = phaseOf(c, pit.entry);
         c.distance = c.lap * track.length + c.u * track.length;
         enterPit(c);
         continue;
@@ -1117,6 +1250,8 @@ export function createWeekend(opts) {
       }
       c.distance = c.lap * track.length + c.u * track.length;
     }
+
+    enforceSpacing();
 
     // Leader lap counter drives weather and the safety car.
     const order = updateOrder();

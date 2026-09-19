@@ -234,11 +234,15 @@ function finishRace(app, race) {
 function renderResult(app, root, race, round) {
   const state = app.state;
   const results = race.results || race.finish();
-  const applied = app.appliedRound === `${state.season}-${state.round}`;
 
-  if (!applied) {
+  // The key has to be read BEFORE the results are applied, because applying
+  // them is what moves the season on. Reading it afterwards stamped this round
+  // with the NEXT round's key, so the next race's results were treated as
+  // already counted and the season stopped dead on round two.
+  const key = `${state.season}-${state.round}`;
+  if (app.appliedRound !== key) {
     applyRaceResults(state, race);
-    app.appliedRound = `${state.season}-${state.round}`;
+    app.appliedRound = key;
     app.save();
   }
 

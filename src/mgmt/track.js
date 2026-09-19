@@ -224,3 +224,51 @@ export function getTrack(circuit, spacing = 6) {
   if (!t) { t = buildTrack(circuit, spacing); _cache.set(key, t); }
   return t;
 }
+
+/**
+ * The line the cars actually take, in metres from the centreline, one value per
+ * sample. Computed once per circuit and cached on the track.
+ *
+ * A line taken straight from the local curvature puts the car on the inside at
+ * exactly the apex and nowhere else — and since a car cannot jump sideways, the
+ * rate limiter then lands it on the inside some way *past* the apex, which is
+ * the one place a driver is never pointing. So the raw offset is smoothed twice
+ * over about a car's braking distance, which moves the turn-in earlier and lets
+ * the car drift back out on the exit, and a much wider smoothing is subtracted
+ * from it, which swings the approach and the exit to the outside. That
+ * difference of two blurs is the outside-in-outside line, and it costs one pass
+ * over the circuit at load.
+ */
+export function racingLine(track) {
+  if (track._line) return track._line;
+  const n = track.samples;
+  const ds = track.length / n;
+  const raw = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const k = track.curv[i], w = track.width[i];
+    raw[i] = -Math.sign(k) * Math.min(w * 0.62, Math.abs(k) * 2600);
+  }
+
+  const blur = (src, metres) => {
+    const r = Math.max(1, Math.round(metres / ds));
+    const out = new Float64Array(n);
+    let acc = 0;
+    for (let i = -r; i <= r; i++) acc += src[((i % n) + n) % n];
+    for (let i = 0; i < n; i++) {
+      out[i] = acc / (2 * r + 1);
+      acc += src[(i + r + 1) % n] - src[((i - r) % n + n) % n];
+    }
+    return out;
+  };
+
+  const near = blur(blur(raw, 24), 24);
+  const far = blur(blur(raw, 130), 130);
+  const line = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const w = track.width[i];
+    const v = near[i] * 2.5 - far[i] * 1.5;
+    line[i] = Math.max(-w * 0.55, Math.min(w * 0.55, v));
+  }
+  track._line = line;
+  return line;
+}

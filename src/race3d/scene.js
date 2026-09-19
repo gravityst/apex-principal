@@ -17,6 +17,7 @@
 import * as THREE from '../../vendor/three/build/three.module.js';
 import { createCarModel } from './carModel.js';
 import { buildSky, buildWorld, createPuffs } from './world.js';
+import { racingLine } from '../mgmt/track.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -229,12 +230,11 @@ export function createRaceScene(canvas, track, opts = {}) {
   scene.add(circuit);
 
   /** The line a car takes if nobody is in the way. Mirrors the race engine. */
+  // The same line the cars drive, so the rubber is laid where they actually go.
+  const LINE = racingLine(track);
   function racingLineAt(u) {
     const f = ((u % 1) + 1) % 1;
-    const i = Math.min(track.samples - 1, Math.floor(f * track.samples));
-    const k = track.curv[i], w = track.width[i];
-    return Math.max(-w * 0.55, Math.min(w * 0.55,
-      -Math.sign(k) * Math.min(w * 0.45, Math.abs(k) * 2600)));
+    return LINE[Math.min(track.samples - 1, Math.floor(f * track.samples))];
   }
 
   // Ground. Without it the world simply stops at the edge of the run-off and
@@ -293,6 +293,10 @@ export function createRaceScene(canvas, track, opts = {}) {
 
   // ---- cars -------------------------------------------------------------
   const cars = new Map();   // id -> { model, group, data, lastPos }
+
+  // Lap phase -> fraction of the lap's length. Supplied by the race engine,
+  // which owns the solved speed profile. Identity until it is set.
+  let warp = null;
 
   function addCar(entry) {
     const model = createCarModel({
@@ -390,11 +394,16 @@ export function createRaceScene(canvas, track, opts = {}) {
       const targetLat = d.lateral ?? 0;
       const speed = d.speed ?? 70;
 
-      // Interpolate along the ring by the shortest way round.
+      // Interpolate along the ring by the shortest way round — in lap PHASE,
+      // which is what the simulation steps in, and only then map to a place on
+      // the circuit. Interpolating the mapped positions instead would draw the
+      // chord across a braking zone; mapping after interpolating gives the real
+      // deceleration and the real exit.
       const from = d.prevU ?? d.u;
       let span = d.u - from;
       span -= Math.round(span);
-      rec.smoothU = ((from + span * a) % 1 + 1) % 1;
+      const phase = ((from + span * a) % 1 + 1) % 1;
+      rec.smoothU = warp ? warp(phase) : phase;
 
       // Lateral is interpolated the same way as distance: the engine moves the
       // car across the track at a real rate, and the renderer draws the frames
@@ -604,6 +613,8 @@ export function createRaceScene(canvas, track, opts = {}) {
     setTargets: (a, b) => { state.targets[0] = a; state.targets[1] = b; },
     setZoom: (z) => { state.zoom = Math.max(14, Math.min(420, z)); },
     setTilt: (t) => { state.tilt = Math.max(0, Math.min(1, t)); },
+    /** How lap phase maps onto the circuit. See `updateCars`. */
+    setWarp: (fn) => { warp = typeof fn === 'function' ? fn : null; },
     getTilt: () => state.tilt,
     setTimeScale: (t) => { state.timeScale = Math.max(1, t || 1); },
     getZoom: () => state.zoom,

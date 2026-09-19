@@ -827,3 +827,28 @@ body.racing main { max-width: none; padding: 0; }
   .dbtn { padding: 6px 10px; font-size: 12px; }
   .tabbtn { padding: 7px 13px; font-size: 12.5px; }
 }
+
+/* ---- tyre health, on the deck ---- */
+
+.dtyre {
+  display: flex; align-items: center; gap: 9px; padding: 6px 0 7px;
+  border-top: 1px solid rgba(120,145,185,.13);
+}
+.dtyre .dty { flex: 0 0 auto; }
+.tbar {
+  flex: 0 0 96px; height: 8px; border-radius: 4px;
+  background: #18202e; overflow: hidden;
+}
+.tbar > i { display: block; height: 100%; border-radius: 4px; background: var(--good); }
+.dtyre .tl { font-size: 12.5px; font-weight: 750; min-width: 34px; }
+.dtyre .tl.warn { color: var(--warn); } .dtyre .tl.bad { color: var(--bad); }
+.dtyre .tn {
+  font-size: 11px; color: var(--ink-3); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.dtyre .tn.bad { color: #ffb4a0; }
+@media (max-width: 640px) {
+  .dtyre { padding: 5px 0 6px; gap: 7px; }
+  .tbar { flex: 0 0 72px; height: 7px; }
+  .dtyre .tn { font-size: 10px; }
+}
