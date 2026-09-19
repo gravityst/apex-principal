@@ -29,7 +29,14 @@ import { makeRng } from './rng.js';
  */
 export function driverPace(driver, ctx = {}) {
   const skill = driver.skill ?? 0.85;
-  let p = 1 - (0.98 - skill) * 0.185;
+  // Skill, as a fraction of the car's grip the driver actually uses. The
+  // coefficient is the whole driver spread: at 0.185 the slowest driver on
+  // the grid was three per cent of grip off the quickest, which is two and a
+  // half seconds a lap at a normal circuit and four in qualifying. A grid
+  // strung out like that has no racing in it — the car in front is simply
+  // gone. 0.075 puts the best and worst about a second apart in equal
+  // machinery and teammates a tenth or two, which is what they are.
+  let p = 1 - (0.98 - skill) * 0.110;
 
   // Form and morale are small next to raw skill, but they are what makes a
   // season feel like it has a story in it.
@@ -46,8 +53,11 @@ export function driverPace(driver, ctx = {}) {
   else if (mode === 'conserve') p -= 0.0078;
   else if (mode === 'hold') p -= 0.0030;
 
-  // Following closely costs front grip in the corners.
-  p -= (ctx.dirtyAir ?? 0) * 0.0145;
+  // Dirty air is deliberately NOT here. The engine charges it once, against
+  // the circuit's own grip sensitivity (see DIRTY_AIR in raceengine.js), and
+  // it used to be charged a second time on this line as well — so following
+  // cost about double what the strategy panel said it did, and a car that got
+  // close was thrown straight back out of range.
 
   return p;
 }

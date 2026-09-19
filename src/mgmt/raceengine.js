@@ -19,6 +19,25 @@ import { toPhysics } from './carspec.js';
 import { driverPace, driverWearFactor, complianceChance, REFUSAL_LINES } from './personnel.js';
 import { pitStopTime } from './facilities.js';
 
+/**
+ * What following costs, and what the tow gives back, as a fraction of a
+ * circuit's own grip sensitivity — so a street circuit punishes it harder
+ * than an autodrome without anyone writing that down.
+ *
+ * These are exported because the strategy panel quotes them at the player.
+ * They used to be two separate numbers in two files: the engine charged
+ * 0.055 and the pit wall reported 0.0145, so a car told it was losing half a
+ * second a lap was in fact losing two and a half, falling out of range every
+ * time it got close, and no amount of pace could ever produce a move. If
+ * these two ever disagree again, overtaking silently becomes impossible.
+ *
+ * 0.017 is about 0.65s a lap at a normal circuit and 0.9s round the houses,
+ * which is roughly what a modern car loses in another's wake. The tow is
+ * worth about 0.4s, and only on the straights.
+ */
+export const DIRTY_AIR = 0.017;
+export const TOW = 0.010;
+
 export const MODES = ['push', 'neutral', 'conserve', 'hold'];
 export const ERS_MODES = ['harvest', 'balanced', 'deploy'];
 
@@ -146,6 +165,11 @@ export function createWeekend(opts) {
     retirements: 0,
     autoStrategy,
   };
+
+  // Counters for tuning the one thing in this model that cannot be judged by
+  // watching: how often a car gets into position to attack, how often it goes,
+  // and how often that works. `?debug` prints them.
+  race.stats = { inRange: 0, noReason: 0, declined: 0, attempts: 0, passes: 0, failed: 0, stuckTime: 0 };
 
   // Lap phase <-> place on the circuit. Filled in once the first car has been
   // solved; see `posOf` below for what it is for.
@@ -319,8 +343,11 @@ export function createWeekend(opts) {
     // Air. Downforce lost in the wake costs time through the corners — which is
     // exactly what `perGripLoss` measures, so the circuit decides how much it
     // hurts. The tow gives some of it back on the straights, and never all.
-    t += (c.dirtyAir ?? 0) * 0.055 * c.model.perGripLoss;
-    t -= (c.tow ?? 0) * 0.022 * c.model.perGripLoss;
+    t += (c.dirtyAir ?? 0) * DIRTY_AIR * c.model.perGripLoss;
+    t -= (c.tow ?? 0) * TOW * c.model.perGripLoss;
+
+    // ...and what it costs on Sunday, every lap of it.
+    t += biasOf(c.team) * 0.17;
 
     if (!c.isPlayer) t += fieldHandicap;
     if (race.safetyCar) t *= race.safetyCar.kind === 'sc' ? 1.40 : 1.37;
@@ -492,6 +519,25 @@ export function createWeekend(opts) {
    *
    * Stable per team and per season, not random per lap.
    */
+  /**
+   * Which way a team set the car up this weekend.
+   *
+   * A car trimmed out for one lap — less wing, softer, everything pointed at
+   * a single push lap — is quick on Saturday and hurts on Sunday, and the
+   * reverse is a car that qualifies badly and comes to you over a stint. It
+   * is a real trade and it is the thing that puts cars out of position, which
+   * is the only reason overtaking has anything to do: a grid that already
+   * agrees with race pace has nothing left to sort out.
+   *
+   * Positive is trimmed for qualifying. Drawn once per weekend per team, so
+   * both cars share it, because it is a setup direction and not a mood.
+   */
+  const setupBias = new Map();
+  function biasOf(team) {
+    if (!setupBias.has(team.id)) setupBias.set(team.id, rng.range(-1, 1));
+    return setupBias.get(team.id);
+  }
+
   function oneLapTrim(team) {
     const id = `${team.id}`;
     let hsh = 2166136261;
@@ -503,7 +549,14 @@ export function createWeekend(opts) {
   function qualiLap(c, pressure) {
     const grip = tyreGrip(weather.wetness > 0.2 ? (weather.wetness > 0.55 ? 'wet' : 'inter') : 'soft', 0.06, weather.wetness);
     const pace = driverPace(c.driver, { mode: 'push', wet: weather.wetness, dirtyAir: 0 });
-    let t = c.model.at(8, grip) / Math.max(0.9, pace) - oneLapTrim(c.team);
+    // Converted through the circuit's own grip sensitivity, exactly as race
+    // pace is. It used to divide the lap by `pace`, which is a much harsher
+    // curve: the same driver was worth two and a half seconds on Sunday and
+    // nearly six on Saturday, and the grid came out strung over five per cent
+    // of a lap. A driver has to be worth the same tenths on both days.
+    let t = c.model.at(8, grip) - (pace - 1) * c.model.perGripLoss
+      - oneLapTrim(c.team)
+      - biasOf(c.team) * 0.22;                    // what the trim buys on Saturday
     // A qualifying lap is one lap: consistency matters more here than anywhere.
     t += Math.abs(rng.normal(0, 0.09 + (1 - (c.driver.consistency ?? 0.88)) * 0.62));
     // And it can simply go wrong.
@@ -1387,12 +1440,13 @@ export function createWeekend(opts) {
   function endMove(c, passed) {
     const d = c.duel;
     if (!d) return;
+    if (passed) race.stats.passes++; else race.stats.failed++;
     const ahead = race.cars.find((x) => x.id === d.targetId);
-    if (ahead) { ahead.defending = 0; ahead.defendEnv = 0; ahead.battleCooldown = passed ? 10 : 8; }
+    if (ahead) { ahead.defending = 0; ahead.defendEnv = 0; ahead.battleCooldown = passed ? 9 : 5; }
     // A pair does not re-litigate the same corner every lap. After a move, both
     // of them settle for a while — which is what lets a gap form and a race
     // have a shape instead of a permanent scrap.
-    c.battleCooldown = passed ? 16 : 11;
+    c.battleCooldown = passed ? 14 : 7;
     if (passed && ahead) {
       // Putting a lapped car behind you is not an overtake and nobody reports
       // it as one; it is traffic.
@@ -1421,6 +1475,7 @@ export function createWeekend(opts) {
       updateAir(c, i > 0 ? ahead : null);
 
       if (c.battleCooldown > 0) c.battleCooldown -= dt;
+      if (ahead && ahead.status === 'running' && c.interval < 1.0 && !c.duel) race.stats.stuckTime += dt;
       if (!ahead || ahead.status !== 'running') continue;
       if (c.duel || ahead.duel || c.defending) continue;
       if (c.battleCooldown > 0) continue;
@@ -1466,8 +1521,10 @@ export function createWeekend(opts) {
       // Proximity is not a reason. He needs pace in hand, a better tyre, the
       // flap or a tow — otherwise he sits there, which is a DRS train.
       const hasReason = paceDelta > 0.04 || tyreDelta > 0.006 || c.drs || (c.tow ?? 0) > 0.55 || firstLap;
-      if (!hasReason || worth < 0.16) { c.battleCooldown = 4; continue; }
-      if (!rng.chance(Math.min(0.88, 0.16 + worth * 0.40))) { c.battleCooldown = 3; continue; }
+      race.stats.inRange++;
+      if (!hasReason || worth < 0.16) { race.stats.noReason++; c.battleCooldown = 4; continue; }
+      if (!rng.chance(Math.min(0.88, 0.16 + worth * 0.40))) { race.stats.declined++; c.battleCooldown = 3; continue; }
+      race.stats.attempts++;
 
       startMove(c, ahead, apex);
     }

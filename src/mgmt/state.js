@@ -17,17 +17,29 @@ import { makeRng } from './rng.js';
 import { BUDGET_CAP, BASE_OPERATING, DISMISSAL_BALANCE, generateSponsorMarket, wageBill } from './finance.js';
 import { facilityUpkeep } from './facilities.js';
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 /**
  * Where each constructor starts. APEX F1 gives every team a `performance`
  * rating between 0.84 and 0.99; that becomes the mean development level, and
- * the team's doctrine decides the shape around it. The spread is deliberately
- * tight — about two and a bit seconds of car between the best and the worst —
- * because the drivers are worth another second and a half on top.
+ * the team's doctrine decides the shape around it.
+ *
+ * How wide that spread is decides whether this game has overtaking in it.
+ * It used to run 46 to 70 — twenty-four development points, close to four
+ * seconds of car, and with the drivers on top a grid covering nearly six per
+ * cent of a lap. The car directly ahead of you was, on average, 0.23s a lap
+ * quicker than yours by construction. No tow, no flap, no tyre offset and no
+ * amount of driving gets past a car that is 0.23s a lap quicker: it simply
+ * drives away from you down every straight. The race was decided in
+ * qualifying and the afternoon was a procession.
+ *
+ * Eleven points instead of twenty-four puts the grid inside two and a half
+ * per cent, which is about where a real field sits, and drops the gap to the
+ * car in front to a tenth — small enough that a better tyre, a slipstream or
+ * a braver driver is worth more than the car is. That is the whole of it.
  */
 function initialSpec(team, rng) {
-  const mean = 46 + (team.performance - 0.84) * 160;
+  const mean = 56 + (team.performance - 0.84) * 75;
   const spec = makeSpec(mean);
   const shape = {
     velocitas: { aero: 8, efficiency: 4, reliability: 4 },
@@ -233,8 +245,56 @@ export function loadGame() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const s = JSON.parse(raw);
-    return s && s.version === SAVE_VERSION ? rehydrate(s) : null;
+    if (!s) return null;
+    if (s.version === SAVE_VERSION) return rehydrate(s);
+    const up = migrate(s);
+    return up ? rehydrate(up) : null;
   } catch { return null; }
+}
+
+/**
+ * Bring an older save forward rather than throwing a career away.
+ *
+ * Version 4 narrowed the grid: the development levels a team starts with used
+ * to run 46 to 70, which put the car ahead of you a quarter of a second a lap
+ * up the road by construction and made overtaking arithmetically impossible.
+ * A save written before that is carrying the old, strung-out field.
+ *
+ * Every team is pulled toward the field's mean in each area by the same
+ * factor the new grid uses, so the order is unchanged and how far ahead or
+ * behind the player's development had put him is preserved in proportion —
+ * he keeps the advantage he paid for, in a field that can now be raced.
+ */
+function migrate(s) {
+  if (!s.version || s.version > SAVE_VERSION || !Array.isArray(s.teams)) return null;
+
+  if (s.version < 4) {
+    const K = 75 / 160;                       // the new spread against the old
+    const meanOf = (t) => {
+      const v = AREA_IDS.map((id) => t.spec?.[id]).filter((x) => typeof x === 'number');
+      return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+    };
+    const means = s.teams.map(meanOf);
+    const known = means.filter((m) => m != null);
+    if (known.length > 1) {
+      const field = known.reduce((a, b) => a + b, 0) / known.length;
+      const newField = 56 + (field - 46) * K;
+      s.teams.forEach((t, i) => {
+        if (means[i] == null || !t.spec) return;
+        // Only the tier gap is squeezed. Each team keeps the shape it built
+        // around its own mean — a team that went all-in on power is still a
+        // power team, and development the player paid for is still there.
+        const shift = (newField + (means[i] - field) * K) - means[i];
+        for (const id of AREA_IDS) {
+          if (typeof t.spec[id] !== 'number') continue;
+          t.spec[id] = Math.max(6, Math.round((t.spec[id] + shift) * 10) / 10);
+        }
+      });
+    }
+  }
+
+  s.version = SAVE_VERSION;
+  return s;
 }
 
 export function hasSave() {
@@ -251,8 +311,11 @@ export function exportSave(state) {
 
 export function importSave(text) {
   const s = JSON.parse(text);
-  if (!s || s.version !== SAVE_VERSION) throw new Error('That save is from a different version of the game.');
-  return rehydrate(s);
+  if (!s) throw new Error('That file is not a save.');
+  if (s.version === SAVE_VERSION) return rehydrate(s);
+  const up = migrate(s);
+  if (!up) throw new Error('That save is from a different version of the game.');
+  return rehydrate(up);
 }
 
 function stripTransient(state) {

@@ -18,7 +18,7 @@
  */
 
 import { TYRE_COMPOUNDS } from '../data/teams.js';
-import { tyreGrip } from './raceengine.js';
+import { tyreGrip, DIRTY_AIR } from './raceengine.js';
 import { driverWearFactor } from './personnel.js';
 
 /** Wear added per lap for a car in its current state. Mirrors the race engine. */
@@ -288,7 +288,7 @@ export function strategyBrief(race, car) {
     call = `The tyre will reach the flag. Nothing left to save — send him.`;
     urgency = 'act';
   } else if (car.dirtyAir > 0.45 && car.interval < 1.2) {
-    call = `Stuck in dirty air, losing ${(car.dirtyAir * 0.0145 * car.model.perGripLoss).toFixed(1)}s a lap and eating the tyres. Either he passes in the next few laps or you stop and undercut.`;
+    call = `Stuck in dirty air, losing ${(car.dirtyAir * DIRTY_AIR * car.model.perGripLoss).toFixed(1)}s a lap and eating the tyres. Either he passes in the next few laps or you stop and undercut.`;
     urgency = 'act';
   } else if (tyre.state === 'healthy' && lapsLeft > tyre.lapsUsable + 4) {
     call = `Nothing to do yet. Pit window opens in about ${windowOpens} laps.`;
