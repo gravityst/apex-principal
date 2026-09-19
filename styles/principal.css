@@ -370,10 +370,88 @@ td.pos { font-family: var(--mono); font-weight: 700; color: var(--ink-2); width:
 .kv .k { color: var(--ink-2); }
 .kv .v { font-variant-numeric: tabular-nums; font-weight: 600; }
 
+/* ---- the hub hero ----
+   Two columns: what the weekend is, and what it looks like. The map used to
+   sit in the middle of a lot of empty card doing nothing; it now holds a
+   whole side and is drawn like a circuit rather than sketched like a doodle. */
 .hero {
-  background: linear-gradient(135deg, #16223a, #0d1420 65%);
-  border: 1px solid var(--line); border-radius: 12px; padding: 20px; position: relative; overflow: hidden;
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: var(--sp-5); align-items: center;
+  background:
+    radial-gradient(120% 140% at 88% 12%, color-mix(in srgb, var(--team) 13%, transparent), transparent 62%),
+    linear-gradient(135deg, #17243d, #0c121d 66%);
+  border: 1px solid var(--line); border-radius: 14px; padding: 22px;
+  position: relative; overflow: hidden; box-shadow: var(--elev-2);
 }
+.hero::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--team);
+}
+.hero-a { min-width: 0; }
+.hero-b { min-width: 0; display: flex; align-items: center; justify-content: center; }
+.herotrack { display: block; width: 100%; height: 232px; }
+
+.hero .rnd { display: flex; align-items: center; gap: 9px; }
+.hero .rnd i {
+  display: block; width: 3px; height: 3px; border-radius: 50%;
+  background: currentColor; opacity: .5;
+}
+.seasonbar {
+  height: 3px; border-radius: 2px; background: rgba(255,255,255,.08);
+  margin: 13px 0 15px; max-width: 320px;
+}
+.seasonbar i {
+  display: block; height: 100%; border-radius: 2px; background: var(--accent);
+  transition: width var(--t-med) var(--ease);
+}
+.charline {
+  display: flex; align-items: baseline; gap: var(--sp-2); margin-top: 14px;
+  padding-top: 13px; border-top: 1px solid rgba(255,255,255,.07);
+}
+.charline .k {
+  font-size: var(--t-2xs); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+}
+.charline b { font-size: var(--t-md); color: var(--ink-2); font-weight: 600; }
+.heroactions { margin-top: 18px; }
+.btn.lg { padding: 12px 20px; font-size: var(--t-md); font-weight: 700; }
+
+@media (max-width: 900px) {
+  .hero { grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); }
+  .hero-b { order: -1; }
+  .herotrack { height: 168px; }
+}
+
+/* ---- the team card ---- */
+.teamcard {
+  --tc: var(--team);
+  background: var(--surface-1); border: 1px solid var(--line-soft);
+  border-radius: var(--radius); overflow: hidden; box-shadow: var(--elev-1);
+}
+.tc-hd {
+  padding: 13px 16px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--tc) 30%, var(--surface-2)), var(--surface-2));
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 4px solid var(--tc);
+}
+.tc-hd b { display: block; font-size: var(--t-lg); font-weight: 700; letter-spacing: -0.01em; }
+.tc-hd span { font-size: var(--t-xs); color: var(--ink-3); }
+.tc-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px; background: var(--line-faint);
+}
+.bstat { background: var(--surface-1); padding: 12px 14px 13px; min-width: 0; }
+.bstat .k {
+  display: block; font-size: var(--t-2xs); letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ink-3); font-weight: 700;
+}
+.bstat .v {
+  display: block; font-size: var(--t-2xl); font-weight: 700;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+  line-height: var(--lh-tight); margin-top: 3px;
+}
+.bstat .v.good { color: var(--good); } .bstat .v.bad { color: var(--bad); }
+.bstat .s { display: block; font-size: var(--t-xs); color: var(--ink-3); margin-top: 3px; }
+.tc-rows { padding: 6px 16px 14px; }
 .hero .rnd { font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
 .hero h2 { font-size: 26px; margin: 5px 0 3px; letter-spacing: -0.02em; }
 .hero .sub { color: var(--ink-2); font-size: 13.5px; }
@@ -384,8 +462,93 @@ td.pos { font-family: var(--mono); font-weight: 700; color: var(--ink-2); width:
   display: grid; place-items: center; padding: 20px; backdrop-filter: blur(3px);
 }
 .modal {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  background: var(--surface-1); border: 1px solid var(--line); border-radius: 14px;
   padding: 24px; max-width: 720px; width: 100%; max-height: 86vh; overflow-y: auto;
+  box-shadow: var(--elev-3);
+}
+
+/* ---- the menu ----
+   It was a heading, a row of buttons, and three settings running into each
+   other down the page. Sections with rules between them, one segmented
+   control per choice instead of a row of loose buttons, and the one
+   irreversible action fenced off where it cannot be hit by accident. */
+.menuhd {
+  --tc: var(--team);
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--sp-4); flex-wrap: wrap;
+  margin: -24px -24px 0; padding: 18px 24px 16px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--tc) 24%, var(--surface-2)), var(--surface-2) 62%);
+  border-bottom: 1px solid var(--line);
+}
+.menuhd .brand b { font-size: var(--t-2xl); }
+.menuteam { text-align: right; }
+.menuteam i {
+  display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+  background: var(--tc); margin-right: 7px;
+}
+.menuteam b { font-size: var(--t-md); font-weight: 700; }
+.menuteam span { display: block; font-size: var(--t-xs); color: var(--ink-3); margin-top: 2px; }
+
+.menusec { padding: 18px 0; border-bottom: 1px solid var(--line-faint); }
+.menusec.last { border-bottom: 0; }
+.menusec h3 {
+  font-size: var(--t-2xs); letter-spacing: .18em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 800; margin-bottom: 8px;
+}
+.menusec > p.tiny { margin: 0 0 11px; max-width: 62ch; line-height: var(--lh-snug); }
+
+.togrow {
+  display: flex; gap: var(--sp-3); align-items: flex-start;
+  padding: 11px 13px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--line-faint);
+  cursor: pointer;
+}
+.togrow:hover { border-color: var(--line); }
+.togrow input { margin-top: 3px; width: 17px; height: 17px; accent-color: var(--accent); }
+.togrow b { font-size: var(--t-md); }
+
+.choice {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
+  gap: 1px; background: var(--line); border: 1px solid var(--line);
+  border-radius: 10px; overflow: hidden;
+}
+.choicebtn {
+  background: var(--surface-1); border: 0; padding: 11px 12px; text-align: left;
+  color: var(--ink-2); min-width: 0;
+}
+.choicebtn:hover { background: var(--surface-2); }
+.choicebtn b { display: block; font-size: var(--t-md); font-weight: 650; }
+.choicebtn span {
+  display: block; font-size: var(--t-xs); color: var(--ink-3); margin-top: 2px;
+  line-height: var(--lh-snug);
+}
+.choicebtn.on {
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface-2));
+  box-shadow: inset 0 2px 0 var(--accent);
+  color: var(--ink);
+}
+.choicebtn.on b { color: #ffc478; }
+.choicebtn.on span { color: var(--ink-2); }
+
+.dangerzone {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-4); flex-wrap: wrap;
+  margin-top: 14px; padding: 12px 14px; border-radius: 10px;
+  background: rgba(255,71,87,.06); border: 1px solid rgba(255,71,87,.26);
+}
+.dangerzone b { font-size: var(--t-md); }
+
+.menufoot {
+  margin: 0 -24px -24px; padding: 16px 24px 20px;
+  border-top: 1px solid var(--line-faint);
+  display: flex; justify-content: flex-end;
+}
+
+@media (max-width: 560px) {
+  .choice { grid-auto-flow: row; grid-auto-columns: auto; }
+  .menuhd { margin: -17px -17px 0; padding: 15px 17px 13px; }
+  .menufoot { margin: 0 -17px -17px; padding: 14px 17px 17px; }
+  .menufoot .btn { flex: 1 1 auto; }
 }
 .modal h2 { font-size: 21px; margin-bottom: 6px; }
 

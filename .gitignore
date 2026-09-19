@@ -1,10 +1,7 @@
 node_modules/
 .DS_Store
 *.log
-_to_delete/
 
-# GitHub refuses a push from an OAuth app that would create or change a
-# workflow file unless the token carries the `workflow` scope. The workflow was
-# only ever a convenience: this repository IS the site, so Pages serves it
-# straight from the branch root with no build step. Not worth a scope.
+# Pages serves this repository from the branch root; the workflow needed a
+# token scope the push does not have and was never doing any work.
 .github/

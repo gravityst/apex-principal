@@ -35,7 +35,8 @@ export function renderHub(app, root) {
   const done = seasonComplete(state);
   const round = done ? null : currentRound(state);
   const table = constructorsTable(state);
-  const myPos = table.findIndex((r) => r.team.id === team.id) + 1;
+  const myPos = Math.max(1, table.findIndex((r) => r.team.id === team.id) + 1);
+  const myRowC = table[myPos - 1] || { points: 0 };
 
   const left = [];
 
@@ -43,23 +44,34 @@ export function renderHub(app, root) {
     const proj = paceProjection(state, round);
     const mine = proj.rows.findIndex((r) => r.team.id === team.id);
     const myRow = proj.rows[mine];
-    const thumb = h('canvas', { style: { width: '100%', height: '150px' } });
-    requestAnimationFrame(() => drawCircuitThumb(thumb, proj.track, team.colors?.accent || '#ff8a00'));
+    const thumb = h('canvas', { class: 'herotrack' });
+    requestAnimationFrame(() => drawCircuitThumb(thumb, proj.track, team.colors?.accent || team.colors?.primary || '#ff8a00'));
 
+    // The hero is the one thing on this screen that gets a whole card, so it
+    // says the only three things that matter on a Thursday: where you are
+    // going, what it is like, and the button that takes you there. The map
+    // used to float in the middle of a lot of nothing.
     left.push(h('div', { class: 'hero' },
-      h('div', { class: 'rnd' }, `Round ${round.round} of ${state.calendar.length} — ${round.month}`),
-      h('h2', {}, round.name),
-      h('div', { class: 'sub' }, `${round.venue} · ${round.location}`),
-      h('div', { class: 'facts' },
-        fact('Distance', `${round.laps} laps`),
-        fact('Length', `${(proj.track.length / 1000).toFixed(3)} km`),
-        fact('Character', circuitCharacter(round.circuit)),
-        fact('Rain risk', pct(round.weather.rain)),
-        fact('Track temp', `${round.weather.track}°C`)),
-      thumb,
-      h('div', { class: 'btnrow', style: { marginTop: '14px' } },
-        h('button', { class: 'btn primary', onClick: () => app.goto('weekend') }, 'Go to the race weekend →'),
-        h('button', { class: 'btn', onClick: () => app.goto('factory') }, 'Factory'))));
+      h('div', { class: 'hero-a' },
+        h('div', { class: 'rnd' },
+          h('span', {}, `Round ${round.round} of ${state.calendar.length}`),
+          h('i', {}), h('span', {}, round.month)),
+        h('h2', {}, round.name),
+        h('div', { class: 'sub' }, `${round.venue} · ${round.location}`),
+        h('div', { class: 'seasonbar' },
+          h('i', { style: { width: `${Math.round((round.round - 1) / state.calendar.length * 100)}%` } })),
+        h('div', { class: 'facts' },
+          fact('Distance', `${round.laps} laps`),
+          fact('Length', `${(proj.track.length / 1000).toFixed(3)} km`),
+          fact('Rain risk', pct(round.weather.rain)),
+          fact('Track temp', `${round.weather.track}°C`)),
+        h('div', { class: 'charline' },
+          h('span', { class: 'k' }, 'Character'), h('b', {}, circuitCharacter(round.circuit))),
+        h('div', { class: 'btnrow heroactions' },
+          h('button', { class: 'btn primary lg', onClick: () => app.goto('weekend') },
+            'Go to the race weekend →'),
+          h('button', { class: 'btn', onClick: () => app.goto('factory') }, 'Factory'))),
+      h('div', { class: 'hero-b' }, thumb)));
 
     left.push(panel('Where you should qualify', `predicted, best driver, low fuel`,
       h('div', { class: 'scroll' }, h('table', {},
@@ -88,17 +100,23 @@ export function renderHub(app, root) {
 
   const right = [];
   const costs = seasonCosts(state);
-  right.push(panel('Your team', null,
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' } },
-      h('i', { class: 'bar-team', style: { background: team.colors.primary, height: '30px', width: '5px' } }),
-      h('div', {}, h('div', { style: { fontWeight: '700', fontSize: '15px' } }, team.name),
-        h('div', { class: 'tiny dim' }, `${team.base} · ${team.engine}`))),
-    kv('Constructors', `${ordinal(myPos)} — ${table[myPos - 1].points} pts`),
-    kv('Balance', money(state.player.balance), state.player.balance < 0 ? 'bad' : state.player.balance > 60 ? 'good' : ''),
-    kv('Development left this round', money(roundBudget(state))),
-    kv('Season running costs', money(costs.total)),
-    kv('Car rating', specRating(team.spec).toFixed(1)),
-    kv('Reputation', pct(state.player.reputation))));
+  // The team card. Four numbers a principal actually watches, at a size you
+  // can read across the room, over a band in the team's own colour — and the
+  // rest underneath where it belongs.
+  const bal = state.player.balance;
+  right.push(h('div', { class: 'teamcard', style: { '--tc': team.colors.primary } },
+    h('div', { class: 'tc-hd' },
+      h('b', {}, team.name),
+      h('span', {}, `${team.base} · ${team.engine}`)),
+    h('div', { class: 'tc-grid' },
+      bigStat('Constructors', ordinal(myPos), `${myRowC.points} pts`),
+      bigStat('Balance', money(bal), bal < 0 ? 'in the red' : 'in hand',
+        bal < 0 ? 'bad' : bal > 60 ? 'good' : ''),
+      bigStat('Car', specRating(team.spec).toFixed(1), 'out of 100'),
+      bigStat('Reputation', pct(state.player.reputation), 'in the paddock')),
+    h('div', { class: 'tc-rows' },
+      kv('Development left this round', money(roundBudget(state))),
+      kv('Season running costs', money(costs.total)))));
 
   right.push(panel('Championship', `after ${state.round} of ${state.calendar.length}`,
     h('table', {}, h('tbody', {}, table.map((r, i) => h('tr', { class: r.team.id === team.id ? 'me' : '' },
@@ -120,6 +138,13 @@ export function renderHub(app, root) {
 
 function fact(k, v) {
   return h('div', { class: 'stat' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, v));
+}
+
+function bigStat(k, v, sub, cls = '') {
+  return h('div', { class: 'bstat' },
+    h('span', { class: 'k' }, k),
+    h('span', { class: `v ${cls}` }, v),
+    h('span', { class: 's' }, sub));
 }
 
 // ---------------------------------------------------------------------------

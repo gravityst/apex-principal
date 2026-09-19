@@ -154,24 +154,67 @@ export function drawCircuitThumb(canvas, track, accent = '#ff8a00') {
   const cssW = rect.width || 200;
   const cssH = rect.height || 120;
   canvas.width = cssW * dpr; canvas.height = cssH * dpr;
-  const pad = 12 * dpr;
+  const pad = 18 * dpr;
   const aspect = track.map.aspect;
   const availW = canvas.width - pad * 2, availH = canvas.height - pad * 2;
   const s = Math.min(availW, availH * aspect);
   const sx = s, sy = s / aspect;
   const ox = (canvas.width - sx) / 2, oy = (canvas.height - sy) / 2;
+  const P = (p) => [ox + p[0] * sx, oy + p[1] * sy];
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.beginPath();
-  track.map.points.forEach((p, i) => {
-    const x = ox + p[0] * sx, y = oy + p[1] * sy;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  });
-  ctx.closePath();
-  ctx.lineWidth = 3 * dpr; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.strokeStyle = '#2b3446';
+
+  const trace = () => {
+    ctx.beginPath();
+    track.map.points.forEach((p, i) => {
+      const [x, y] = P(p);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+  };
+
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+  // Three passes: a soft glow in the team's colour, the asphalt, and the
+  // colour on top of it. A single hairline outline read as a doodle; this
+  // reads as a circuit.
+  ctx.save();
+  ctx.shadowColor = accent;
+  ctx.shadowBlur = 16 * dpr;
+  trace();
+  ctx.lineWidth = 9 * dpr;
+  ctx.strokeStyle = 'rgba(0,0,0,0)';
   ctx.stroke();
-  ctx.lineWidth = 1.4 * dpr;
+  ctx.restore();
+
+  trace();
+  ctx.lineWidth = 9 * dpr;
+  ctx.strokeStyle = '#2f3a4e';
+  ctx.stroke();
+
+  trace();
+  ctx.lineWidth = 5.5 * dpr;
+  ctx.strokeStyle = '#161d29';
+  ctx.stroke();
+
+  trace();
+  ctx.lineWidth = 2 * dpr;
   ctx.strokeStyle = accent;
   ctx.stroke();
+
+  // The start line, so the lap has a beginning.
+  const pts = track.map.points;
+  if (pts.length > 2) {
+    const [x0, y0] = P(pts[0]);
+    const [x1, y1] = P(pts[1 % pts.length]);
+    const a = Math.atan2(y1 - y0, x1 - x0) + Math.PI / 2;
+    const r = 7 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(x0 + Math.cos(a) * r, y0 + Math.sin(a) * r);
+    ctx.lineTo(x0 - Math.cos(a) * r, y0 - Math.sin(a) * r);
+    ctx.lineWidth = 2.5 * dpr;
+    ctx.strokeStyle = '#e8eef8';
+    ctx.stroke();
+  }
 }
+

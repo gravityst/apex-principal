@@ -44,13 +44,16 @@ const app = {
 
 const rootEl = document.getElementById('app');
 
-app.save = () => { if (app.state) saveGame(app.state); };
+app.save = () => (app.state ? saveGame(app.state) : false);
 
 app.goto = (tab) => {
   if (app.tab !== tab) { app.stopLoop?.(); app.stopLoop = null; }
   app.tab = tab;
   app.render();
 };
+
+// A handle on the whole app for the browser tests, under ?debug only.
+if (typeof location !== 'undefined' && location.search.indexOf('debug') >= 0) window.__apexApp = app;
 
 app.render = () => {
   if (!app.state) return renderSplash();
@@ -179,86 +182,134 @@ function renderDismissed() {
 
 function openMenu() {
   const state = app.state;
-  const close = modal(
-    h('h2', {}, 'Menu'),
-    h('div', { class: 'btnrow', style: { marginTop: '16px' } },
-      h('button', {
-        class: 'btn', onClick: () => {
-          const blob = new Blob([exportSave(state)], { type: 'application/json' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = `apex-principal-s${state.season}-r${state.round}.json`;
-          a.click();
-          URL.revokeObjectURL(a.href);
-        },
-      }, 'Export save'),
-      h('button', {
-        class: 'btn', onClick: () => {
-          const input = h('input', { type: 'file', accept: '.json,application/json' });
-          input.addEventListener('change', async () => {
-            try {
-              const text = await input.files[0].text();
-              app.state = importSave(text);
-              app.weekend = null; app.appliedRound = null;
-              close(); app.save(); app.goto('hub');
-            } catch (e) { alert(`That save could not be loaded. ${e.message}`); }
-          });
-          input.click();
-        },
-      }, 'Import save'),
-      h('button', {
-        class: 'btn danger', onClick: () => {
-          close();
-          confirmDialog('Abandon this career?', 'The save will be deleted and cannot be recovered.', 'Delete it', () => {
-            clearSave(); app.state = null; app.weekend = null; app.render();
-          });
-        },
-      }, 'New career')),
-    h('h3', { style: { marginTop: '22px' } }, 'Settings'),
-    h('label', { style: { display: 'flex', gap: '10px', alignItems: 'center', padding: '10px 0' } },
-      h('input', {
-        type: 'checkbox', checked: state.settings.autoStrategy,
-        onChange: (e) => { state.settings.autoStrategy = e.target.checked; app.save(); },
-      }),
-      h('div', {}, h('b', {}, 'Race engineer runs strategy when you do not'),
-        h('div', { class: 'tiny dim' }, 'If you leave a car alone, it will pit on worn tyres and react to rain by itself. Turn this off for full manual control.'))),
-    h('div', { style: { padding: '12px 0 4px' } },
-      h('b', {}, 'Difficulty'),
-      h('div', { class: 'tiny dim', style: { margin: '3px 0 9px' } },
-        'A handicap on the rest of the field, and nothing else — it does not touch their development, their money or their decisions, only how hard they are to beat on Sunday.'),
-      h('div', { class: 'btnrow' }, [
-        ['relaxed', 'Relaxed', 'a third of a second a lap your way'],
-        ['normal', 'Normal', 'no handicap either way'],
-        ['brutal', 'Brutal', 'a third of a second a lap against you'],
-      ].map(([id, name, blurb]) => h('button', {
-        class: `btn sm ${(state.settings.difficulty || 'normal') === id ? 'on' : ''}`,
-        title: blurb,
-        onClick: () => {
-          state.settings.difficulty = id;
-          app.weekend = null;                  // takes effect from the next session
-          app.save(); close(); openMenu();
-        },
-      }, name)))),
+  const team = playerTeam(state);
 
-    h('div', { style: { padding: '12px 0 4px' } },
-      h('b', {}, 'Race distance'),
-      h('div', { class: 'tiny dim', style: { margin: '3px 0 9px' } },
+  /** A segmented control. Three buttons in a row is not a setting, it is a row
+   *  of buttons; this reads as one control with one of its positions chosen. */
+  function segmented(current, options, pick) {
+    return h('div', { class: 'choice' }, options.map(([id, name, blurb]) => h('button', {
+      class: `choicebtn ${current === id ? 'on' : ''}`,
+      'aria-pressed': current === id ? 'true' : 'false',
+      onClick: () => pick(id),
+    }, h('b', {}, name), h('span', {}, blurb))));
+  }
+
+  const close = modal(
+    h('div', { class: 'menuhd', style: { '--tc': team.colors.primary } },
+      h('div', { class: 'brand' }, h('b', {}, 'APEX'), h('span', {}, 'Principal')),
+      h('div', { class: 'menuteam' },
+        h('i', {}), h('b', {}, team.name),
+        h('span', {}, `Season ${state.season} · round ${state.round} of ${state.calendar.length}`))),
+
+    h('div', { class: 'menusec' },
+      h('h3', {}, 'Race engineer'),
+      h('label', { class: 'togrow' },
+        h('input', {
+          type: 'checkbox', checked: state.settings.autoStrategy,
+          onChange: (e) => { state.settings.autoStrategy = e.target.checked; app.save(); },
+        }),
+        h('div', {},
+          h('b', {}, 'He runs strategy when you do not'),
+          h('div', { class: 'tiny dim' }, 'Leave a car alone and it will pit on worn tyres and react to rain by itself. Off means nothing happens unless you call it.')))),
+
+    h('div', { class: 'menusec' },
+      h('h3', {}, 'Difficulty'),
+      h('p', { class: 'tiny dim' },
+        'A handicap on the rest of the field, and nothing else — it does not touch their development, their money or their decisions, only how hard they are to beat on Sunday.'),
+      segmented(state.settings.difficulty || 'normal', [
+        ['relaxed', 'Relaxed', 'a third of a second your way'],
+        ['normal', 'Normal', 'no handicap either way'],
+        ['brutal', 'Brutal', 'a third of a second against you'],
+      ], (id) => {
+        state.settings.difficulty = id;
+        app.weekend = null;                    // takes effect from the next session
+        app.save(); close(); openMenu();
+      })),
+
+    h('div', { class: 'menusec' },
+      h('h3', {}, 'Race distance'),
+      h('p', { class: 'tiny dim' },
         'A grand prix is about 305 kilometres. Anything less is a shorter race, not a faster one — the strategy changes with it.'),
-      h('div', { class: 'btnrow' }, Object.values(DISTANCES).map((d) => h('button', {
-        class: `btn sm ${(state.settings.distance || 'full') === d.id ? 'on' : ''}`,
-        title: d.blurb,
-        onClick: () => {
-          state.settings.distance = d.id;
+      segmented(state.settings.distance || 'full',
+        Object.values(DISTANCES).map((d) => [d.id, d.name, d.blurb]),
+        (id) => {
+          state.settings.distance = id;
           app.weekend = null;
           app.save(); close(); openMenu();
-        },
-      }, d.name)))),
+        })),
 
-    h('h3', { style: { marginTop: '18px' } }, 'About'),
-    h('p', { class: 'small muted' },
-      'Built on the physics of APEX F1. Lap times come from a quasi-steady-state solver running over the real circuit geometry — every development point moves a genuine physical parameter. Teams, drivers, sponsors and circuits are invented.'),
-    h('div', { class: 'btnrow', style: { marginTop: '16px' } },
-      h('button', { class: 'btn primary', onClick: () => close() }, 'Close')));
+    h('div', { class: 'menusec' },
+      h('h3', {}, 'This career'),
+      h('div', { class: 'btnrow' },
+        h('button', {
+          class: 'btn', onClick: () => {
+            const blob = new Blob([exportSave(state)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `apex-principal-s${state.season}-r${state.round}.json`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+          },
+        }, 'Export save'),
+        h('button', {
+          class: 'btn', onClick: () => {
+            const input = h('input', { type: 'file', accept: '.json,application/json' });
+            input.addEventListener('change', async () => {
+              // Import is all-or-nothing. It used to assign app.state and then
+              // render; if the render threw — one missing field in an older
+              // file was enough — the game was left holding a state it had
+              // never drawn, with the old screen still on top of it. Every
+              // button clicked and nothing happened. So: build it, draw it,
+              // and only keep it if both worked.
+              const previous = app.state;
+              const prevTab = app.tab;
+              try {
+                const file = input.files && input.files[0];
+                if (!file) return;
+                const next = importSave(await file.text());
+                app.state = next;
+                app.weekend = null;
+                app.appliedRound = null;
+                app.stopLoop?.(); app.stopLoop = null;
+                document.body.classList.remove('racing');
+                app.tab = 'hub';
+                app.render();                       // if this throws, nothing is kept
+                close();
+                if (!app.save()) {
+                  alert('The career loaded, but it could not be written to this '
+                    + 'browser\'s storage — probably because it is full. Keep the '
+                    + 'file: closing the tab will lose the progress from here.');
+                }
+              } catch (e) {
+                app.state = previous;
+                app.tab = prevTab;
+                try { app.render(); } catch { /* the old state drew a moment ago */ }
+                alert(`That save could not be loaded, so nothing has changed.\n\n${e.message}`);
+              }
+            });
+            input.click();
+          },
+        }, 'Import save')),
+      h('div', { class: 'dangerzone' },
+        h('div', {},
+          h('b', {}, 'Start again'),
+          h('div', { class: 'tiny dim' }, 'Deletes this career. There is no undo and no second save.')),
+        h('button', {
+          class: 'btn danger', onClick: () => {
+            close();
+            confirmDialog('Abandon this career?', 'The save will be deleted and cannot be recovered.', 'Delete it', () => {
+              clearSave(); app.state = null; app.weekend = null; app.render();
+            });
+          },
+        }, 'New career'))),
+
+    h('div', { class: 'menusec last' },
+      h('h3', {}, 'About'),
+      h('p', { class: 'small muted' },
+        'Built on the physics of APEX F1. Lap times come from a quasi-steady-state solver running over the real circuit geometry — every development point moves a genuine physical parameter. Teams, drivers, sponsors and circuits are invented.')),
+
+    h('div', { class: 'menufoot' },
+      h('button', { class: 'btn primary lg', onClick: () => close() }, 'Back to the pit wall')));
 }
 
 // ---------------------------------------------------------------------------

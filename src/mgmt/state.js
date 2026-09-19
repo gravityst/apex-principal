@@ -329,6 +329,69 @@ function rehydrate(s) {
     for (const d of t.drivers) d.team = undefined;   // never serialise a cycle
   }
   s.calendar = buildCalendar();                      // circuits are data, not save state
+  return repair(s);
+}
+
+/**
+ * Make a loaded save safe to render.
+ *
+ * A save is a JSON file that has been round-tripped, possibly written by an
+ * older build, possibly hand-edited, possibly truncated. Anything missing
+ * from it used to surface as a TypeError several screens later — and because
+ * the import handler assigned `app.state` before rendering, a throw left the
+ * game holding a new state it had never drawn: the chrome was still there,
+ * every button still clicked, and nothing happened. That is the "it imports
+ * and then the game is dead" bug.
+ *
+ * So: fill in what can be defaulted, throw with a sentence a human can read
+ * for what cannot, and never let either reach the renderer.
+ */
+function repair(s) {
+  if (!s || typeof s !== 'object') throw new Error('That file is not an APEX save.');
+  if (!Array.isArray(s.teams) || !s.teams.length) throw new Error('That save has no teams in it.');
+  if (!s.teams.some((t) => t.id === s.playerTeamId)) {
+    throw new Error('That save does not say which team is yours, so there is nothing to run.');
+  }
+
+  s.settings = {
+    autoStrategy: true, difficulty: 'normal', distance: 'full',
+    ...(s.settings && typeof s.settings === 'object' ? s.settings : {}),
+  };
+
+  s.season = Number.isFinite(s.season) ? s.season : 1;
+  // A round outside the calendar means the weekend screen has nothing to
+  // build, which is a blank screen and a button that does nothing.
+  s.round = Math.max(0, Math.min(s.calendar.length, Number.isFinite(s.round) ? s.round : 0));
+
+  s.player = s.player && typeof s.player === 'object' ? s.player : {};
+  if (!Number.isFinite(s.player.balance)) s.player.balance = 0;
+  if (!Number.isFinite(s.player.reputation)) s.player.reputation = 0.5;
+  if (!Number.isFinite(s.player.developedForRound)) s.player.developedForRound = -1;
+  if (!s.player.allocation || typeof s.player.allocation !== 'object') {
+    s.player.allocation = defaultAllocation();
+  }
+  for (const id of AREA_IDS) {
+    if (!Number.isFinite(s.player.allocation[id])) s.player.allocation[id] = 1 / AREA_IDS.length;
+  }
+
+  if (!Array.isArray(s.news)) s.news = [];
+  if (!Array.isArray(s.results)) s.results = [];
+
+  for (const t of s.teams) {
+    if (!t.spec || typeof t.spec !== 'object') t.spec = makeSpec(56);
+    for (const id of AREA_IDS) {
+      if (!Number.isFinite(t.spec[id])) t.spec[id] = 56;
+    }
+    if (!Array.isArray(t.drivers) || t.drivers.length < 2) {
+      throw new Error(`That save is missing drivers for ${t.name || t.id}.`);
+    }
+    if (!t.staff || typeof t.staff !== 'object') t.staff = {};
+    if (!t.facilities || typeof t.facilities !== 'object') t.facilities = makeFacilities(2);
+    if (!t.colors || typeof t.colors !== 'object') t.colors = { primary: '#888', accent: '#ff8a00' };
+  }
+
+  // A weekend never belongs in a save; if one was written in, drop it.
+  delete s.weekend;
   return s;
 }
 
