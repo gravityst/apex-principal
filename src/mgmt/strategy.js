@@ -287,7 +287,7 @@ export function strategyBrief(race, car) {
   } else if (canReachEnd && lapsLeft < 12 && car.mode !== 'push') {
     call = `The tyre will reach the flag. Nothing left to save — send him.`;
     urgency = 'act';
-  } else if (car.dirtyAir > 0.45 && car.interval < 1.2) {
+  } else if (race.dirtyAirOn && car.dirtyAir > 0.45 && car.interval < 1.2) {
     call = `Stuck in dirty air, losing ${(car.dirtyAir * DIRTY_AIR * car.model.perGripLoss).toFixed(1)}s a lap and eating the tyres. Either he passes in the next few laps or you stop and undercut.`;
     urgency = 'act';
   } else if (tyre.state === 'healthy' && lapsLeft > tyre.lapsUsable + 4) {
@@ -347,7 +347,7 @@ export function engineerCalls(race, car, memo) {
     out.push({ p: 'high', text: `${uc.target.driver.name} is ${uc.gapNow.toFixed(1)} up the road and the undercut is on. Box this lap and we have him.` });
   }
 
-  if (car.dirtyAir > 0.5 && car.interval < 1.0 && !said('dirty', 7)) {
+  if (race.dirtyAirOn && car.dirtyAir > 0.5 && car.interval < 1.0 && !said('dirty', 7)) {
     out.push({ p: 'normal', text: `We are in his dirty air, losing front end and killing the tyres. We need to do something with this.` });
   }
 

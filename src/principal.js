@@ -19,6 +19,7 @@ import { endSeason, seasonComplete, currentRound, autoSignSponsors, DISTANCES } 
 import { specRating } from './mgmt/carspec.js';
 import { TEAMS } from './data/teams.js';
 import { doctrineName } from './mgmt/rivals.js';
+import { DIRTY_AIR_MODES } from './mgmt/raceengine.js';
 
 const TABS = [
   { id: 'hub', name: 'Hub' },
@@ -225,6 +226,22 @@ function openMenu() {
         app.weekend = null;                    // takes effect from the next session
         app.save(); close(); openMenu();
       })),
+
+    h('div', { class: 'menusec' },
+      h('h3', {}, 'Dirty air'),
+      h('p', { class: 'tiny dim' },
+        'A car in another\'s wake loses downforce and so loses time in the corners. '
+        + 'It is real, and it is the reason modern racing can look like a queue: the '
+        + 'car behind pays for being behind, every lap, and over a race that is what '
+        + 'strings a field out. Off means the wake costs nothing — the slipstream '
+        + 'still works, so running close is a straight advantage.'),
+      segmented(state.settings.dirtyAir || 'off',
+        Object.values(DIRTY_AIR_MODES).map((d) => [d.id, d.name, d.blurb]),
+        (id) => {
+          state.settings.dirtyAir = id;
+          app.weekend = null;                  // takes effect from the next session
+          app.save(); close(); openMenu();
+        })),
 
     h('div', { class: 'menusec' },
       h('h3', {}, 'Race distance'),

@@ -33,13 +33,18 @@ export const SAVE_VERSION = 4;
  * drives away from you down every straight. The race was decided in
  * qualifying and the afternoon was a procession.
  *
- * Eleven points instead of twenty-four puts the grid inside two and a half
- * per cent, which is about where a real field sits, and drops the gap to the
- * car in front to a tenth — small enough that a better tyre, a slipstream or
- * a braver driver is worth more than the car is. That is the whole of it.
+ * Eleven points instead of twenty-four put the grid inside two and a half per
+ * cent, which is about where a real field sits. Eight is where it needed to
+ * end up. Qualifying spread is not the number that matters to someone
+ * playing: a pace difference is paid every lap, so a grid covering a second
+ * and three quarters between pole and tenth becomes a hundred seconds by the
+ * flag, and being lapped by a car you qualified eight tenths behind does not
+ * feel like racing whatever the spreadsheet says. Eight points holds the grid
+ * inside about one and a half per cent and brings the finishing order back to
+ * something a grand prix produces.
  */
 function initialSpec(team, rng) {
-  const mean = 56 + (team.performance - 0.84) * 75;
+  const mean = 57 + (team.performance - 0.84) * 52;
   const spec = makeSpec(mean);
   const shape = {
     velocitas: { aero: 8, efficiency: 4, reliability: 4 },
@@ -116,7 +121,7 @@ export function newGame({ seed = Date.now() & 0x7fffffff, playerTeamId = 'halcyo
       inbox: [],
       lastReport: null,
     },
-    settings: { autoStrategy: true, raceSpeed: 4, difficulty: 'normal', distance: 'full' },
+    settings: { autoStrategy: true, raceSpeed: 4, difficulty: 'normal', distance: 'full', dirtyAir: 'off' },
   };
 
   for (const t of teams) {
@@ -354,7 +359,7 @@ function repair(s) {
   }
 
   s.settings = {
-    autoStrategy: true, difficulty: 'normal', distance: 'full',
+    autoStrategy: true, difficulty: 'normal', distance: 'full', dirtyAir: 'off',
     ...(s.settings && typeof s.settings === 'object' ? s.settings : {}),
   };
 

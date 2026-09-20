@@ -38,6 +38,25 @@ import { pitStopTime } from './facilities.js';
 export const DIRTY_AIR = 0.017;
 export const TOW = 0.010;
 
+/**
+ * How much of the wake a weekend actually charges for.
+ *
+ * Dirty air is physically real and it is also the single least popular thing
+ * in modern racing, for the good reason that it punishes the car behind for
+ * being behind. In a simulation it compounds: every car except the leader
+ * pays it every lap, which spreads a field that qualified within a second
+ * over two minutes by the flag, and it is the follower — the one trying to
+ * do something about it — who pays.
+ *
+ * So it is a setting, and it is off by default. Off means the wake costs no
+ * lap time and no extra tyre wear; the tow still works, so running close is
+ * a straight advantage and a quicker car gets to use it.
+ */
+export const DIRTY_AIR_MODES = {
+  off: { id: 'off', name: 'Off', scale: 0, blurb: 'the wake costs you nothing' },
+  on: { id: 'on', name: 'Realistic', scale: 1, blurb: 'following close costs grip' },
+};
+
 export const MODES = ['push', 'neutral', 'conserve', 'hold'];
 export const ERS_MODES = ['harvest', 'balanced', 'deploy'];
 
@@ -65,9 +84,19 @@ export function tyreGrip(compound, wear, wetness, age = 9) {
   if (age < 2) g *= 0.955 + Math.min(1, age / 2) * 0.045;
 
   // Wear: gentle, then a cliff once the tyre is done.
-  if (wear <= 0.75) g *= 1 - wear * 0.033;
-  else if (wear <= 1.0) g *= 0.97525 - (wear - 0.75) * 0.30;
-  else g *= Math.max(0.74, 0.90 - (wear - 1.0) * 0.55);
+  //
+  // The numbers here decide whether this is a race or a procession. They used
+  // to take 26% of a car's grip off a tyre worn past its life — ten seconds a
+  // lap at a normal circuit. Anything that put one car a stint out of step
+  // with another then produced a two-minute gap between cars that qualified
+  // three tenths apart, and a car that missed a stop was simply gone.
+  //
+  // A shot tyre in reality costs two or three seconds a lap: enough to lose
+  // you the race, not enough to lap you. That is about seven per cent of
+  // grip, and that is where this now tops out.
+  if (wear <= 0.75) g *= 1 - wear * 0.020;               // ~0.6s a lap at 75%
+  else if (wear <= 1.0) g *= 0.985 - (wear - 0.75) * 0.12; // ~1.8s a lap at the cliff
+  else g *= Math.max(0.915, 0.955 - (wear - 1.0) * 0.16);  // ~3.4s a lap, and no worse
 
   // Water.
   if (WET_COMPOUNDS.includes(compound)) {
@@ -84,10 +113,17 @@ export function tyreGrip(compound, wear, wetness, age = 9) {
   return Math.max(0.35, g);
 }
 
-/** Wear added per lap. */
+/**
+ * Wear added per lap.
+ *
+ * 0.034 puts a medium at about twenty-nine laps of life, a soft at nineteen
+ * and a hard at forty-three, which is a one or two stop race over a grand
+ * prix distance. At 0.052 a medium was done in nineteen laps and everybody
+ * stopped three times, which is not a strategy — it is a queue.
+ */
 function wearPerLap(compound, phys, driver, ctx, abrasion) {
   const c = TYRE_COMPOUNDS[compound] || TYRE_COMPOUNDS.medium;
-  const base = 0.052 * abrasion;
+  const base = 0.034 * abrasion;
   return base * c.wearRate * phys.wearRate * driverWearFactor(driver, ctx)
     * (1 + (ctx.wetness ?? 0) * -0.35);          // a wet track is gentle on tyres
 }
@@ -131,6 +167,7 @@ export function createWeekend(opts) {
   // decisions, only how hard they are to beat on Sunday.
   const DIFFICULTY = { relaxed: 0.32, normal: 0, brutal: -0.30 };
   const fieldHandicap = DIFFICULTY[opts.difficulty] ?? 0;
+  const dirtyAirScale = (DIRTY_AIR_MODES[opts.dirtyAir] ?? DIRTY_AIR_MODES.off).scale;
 
   const pit = circuit.pit || { entry: 0.95, exit: 0.05, speedLimit: 22.2 };
   const pitSpan = ((pit.exit - pit.entry) % 1 + 1) % 1;
@@ -170,6 +207,9 @@ export function createWeekend(opts) {
   // watching: how often a car gets into position to attack, how often it goes,
   // and how often that works. `?debug` prints them.
   race.stats = { inRange: 0, noReason: 0, declined: 0, attempts: 0, passes: 0, failed: 0, stuckTime: 0 };
+  // The strategy panel asks, so that it never tells you that you are stuck in
+  // a wake that this weekend does not charge for.
+  race.dirtyAirOn = dirtyAirScale > 0;
 
   // Lap phase <-> place on the circuit. Filled in once the first car has been
   // solved; see `posOf` below for what it is for.
@@ -343,7 +383,7 @@ export function createWeekend(opts) {
     // Air. Downforce lost in the wake costs time through the corners — which is
     // exactly what `perGripLoss` measures, so the circuit decides how much it
     // hurts. The tow gives some of it back on the straights, and never all.
-    t += (c.dirtyAir ?? 0) * DIRTY_AIR * c.model.perGripLoss;
+    t += (c.dirtyAir ?? 0) * DIRTY_AIR * dirtyAirScale * c.model.perGripLoss;
     t -= (c.tow ?? 0) * TOW * c.model.perGripLoss;
 
     // ...and what it costs on Sunday, every lap of it.
@@ -1838,7 +1878,7 @@ export function createWeekend(opts) {
       updateDriverIntent(c, dLap);
       fuelBurn(c, dLap);
       c.wear += wearPerLap(c.tyre, c.phys, c.driver, {
-        mode: c.mode, dirtyAir: c.dirtyAir, wetness: weather.wetness,
+        mode: c.mode, dirtyAir: (c.dirtyAir ?? 0) * dirtyAirScale, wetness: weather.wetness,
       }, abrasion) * dLap;
       c.tyreAge += dLap;
       rollMistake(c, dLap);

@@ -117,6 +117,7 @@ export function buildWeekend(state, round) {
     track, round: { ...round, laps }, entries, rng,
     autoStrategy: state.settings.autoStrategy,
     difficulty: state.settings.difficulty || 'normal',
+    dirtyAir: state.settings.dirtyAir || 'off',
   });
   race.playerTeamId = state.playerTeamId;
   return race;
