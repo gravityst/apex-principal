@@ -1353,15 +1353,38 @@ export function createWeekend(opts) {
 
     const v = Math.max(28, currentSpeed(c));
     const reach = apex ? apex.metres : 190;
-    const apexAt = Math.max(0.9, Math.min(6.5, reach / v));
+    // How long he has to get it done. The floor used to be nine tenths of a
+    // second, which is not a move — it is a lunge from too far back at a corner
+    // that was already there. Even at four metres a second of closing that is
+    // three and a half metres, and a move that starts seven metres adrift
+    // cannot reach the overlap it needs. A move needs a run at it.
+    const apexAt = Math.max(1.8, Math.min(6.5, reach / v));
+
+    // How much overlap he needs at turn-in to be given the corner.
+    //
+    // These numbers were very nearly unreachable. Overlap is 1 - gap/carLength,
+    // and a move cannot close nearer than `clearanceFor` allows — two metres
+    // when properly alongside, which is an overlap of about 0.64. Against a
+    // requirement of 0.62 that left a window of two hundredths, and if the
+    // attacker was still pulling alongside when the corner arrived, the
+    // clearance was larger and the overlap could not get there at all. A car a
+    // second a lap quicker could attack the same man for a whole race and
+    // never once be given the corner.
+    //
+    // Down the inside, a front wheel alongside is enough, and that is what
+    // 0.45 means. Round the outside it is not.
+    const paceEdge = Math.max(0, currentLapTime(ahead) - currentLapTime(c));
+    // A quicker car gets the benefit of the doubt, and a driver who has been
+    // trying the same man for laps gets it more. Being stuck behind one car for
+    // an afternoon is the single least satisfying thing a race can do.
+    const tries = Math.min(4, (c._triedOn && c._triedOn.id === ahead.id) ? c._triedOn.n : 0);
+    const edge = Math.min(0.14, paceEdge * 0.20) + tries * 0.035;
 
     c.duel = {
       targetId: ahead.id,
       side,
       inside: takesInside,
-      // How much overlap he needs at turn-in to be given the corner. Down the
-      // inside, a front wheel alongside is enough. Round the outside it is not.
-      needed: takesInside ? 0.62 : 0.88,
+      needed: Math.max(0.28, (takesInside ? 0.45 : 0.72) - edge),
       stage: 'run',
       t: 0,
       apexAt,
@@ -1371,6 +1394,9 @@ export function createWeekend(opts) {
       decided: null,
       announced: false,
     };
+    c._triedOn = (c._triedOn && c._triedOn.id === ahead.id)
+      ? { id: ahead.id, n: c._triedOn.n + 1 }
+      : { id: ahead.id, n: 1 };
     ahead.defending = takesInside ? -insideSide : insideSide;   // he covers the inside
     ahead.defendEnv = 0;
     ahead.battleCooldown = Math.max(ahead.battleCooldown, 1.2);
@@ -1405,7 +1431,14 @@ export function createWeekend(opts) {
       const drs = c.drs ? 5.5 * straightness(posOf(c)) : 0;
       const grit = ((c.driver.aggression ?? 0.75) - 0.5) * 2.2;
       const held = ((ahead.driver.skill ?? 0.85) - 0.8) * 3.0 + (ahead.mode === 'hold' ? 1.4 : 0);
-      let closing = paceAdv * 6.0 + tow + drs + grit - held;
+      // Each go he has had at this same man makes the next one more committed.
+      const persistence = Math.min(4.0, ((c._triedOn && c._triedOn.id === ahead.id ? c._triedOn.n : 1) - 1) * 1.1);
+      // Pace is worth more than it was. A car that is genuinely quicker arrives
+      // at the braking zone carrying that advantage, and the whole reason a
+      // faster car gets past in reality is that it is already going faster when
+      // it gets there. At 6.0 a car four tenths a lap quicker closed at two
+      // metres a second, which a competent defender simply cancelled.
+      let closing = paceAdv * 9.0 + tow + drs + grit + persistence - held;
       if (d.stage === 'switchback') closing += 5.5;                 // better exit, better drive
       // Once he is level there is nothing left to gain from the tow, so the
       // last half a car length is the hardest. That is the whole feel of it.
@@ -1414,8 +1447,21 @@ export function createWeekend(opts) {
       // He cannot close the last few metres on the same line, however quick he
       // is: there is a car there. Clamping the move rather than correcting it
       // afterwards is also what stops the pass looking like a lurch.
+      //
+      // But a driver who has been GIVEN the corner has to be allowed to take
+      // it. This clamp used to apply to him too, and it is the reason a car
+      // two seconds a lap quicker could win corner after corner and never once
+      // get by: he would reach `alongside` with an overlap of 0.71 against a
+      // requirement of 0.28, be unable to close past the two metres of
+      // clearance, fail the `gap < 0` test that completes a pass, and go round
+      // again. He won the move every lap and the move never finished.
+      //
+      // Once the corner is his and he is properly alongside, the clamp goes.
+      // Side by side at two metres of lateral separation, one car moving ahead
+      // of the other is not two cars in the same place — it is an overtake.
       let move = closing * dt;
-      if (move > 0) move = Math.min(move, Math.max(0, gap - clearanceFor(ahead, c)));
+      const through = d.decided === 'pass' && alongside;
+      if (move > 0 && !through) move = Math.min(move, Math.max(0, gap - clearanceFor(ahead, c)));
       nudge(c, move);
 
       if (d.overlap > 0.22) d.stage = d.stage === 'switchback' ? 'switchback' : 'alongside';
@@ -1463,7 +1509,7 @@ export function createWeekend(opts) {
           d.stage = 'switchback';
           d.side = -d.side;
           d.inside = !d.inside;
-          d.needed = d.inside ? 0.62 : 0.88;
+          d.needed = Math.max(0.28, (d.inside ? 0.45 : 0.72) - 0.06);
           d.decided = null;
           d.contact = false;
           d.reply = true;
@@ -1482,11 +1528,12 @@ export function createWeekend(opts) {
     if (!d) return;
     if (passed) race.stats.passes++; else race.stats.failed++;
     const ahead = race.cars.find((x) => x.id === d.targetId);
-    if (ahead) { ahead.defending = 0; ahead.defendEnv = 0; ahead.battleCooldown = passed ? 9 : 5; }
+    if (ahead) { ahead.defending = 0; ahead.defendEnv = 0; ahead.battleCooldown = passed ? 9 : 3.5; }
     // A pair does not re-litigate the same corner every lap. After a move, both
     // of them settle for a while — which is what lets a gap form and a race
     // have a shape instead of a permanent scrap.
-    c.battleCooldown = passed ? 14 : 7;
+    c.battleCooldown = passed ? 14 : 4.5;
+    if (passed) c._triedOn = null;
     if (passed && ahead) {
       // Putting a lapped car behind you is not an overtake and nobody reports
       // it as one; it is traffic.
@@ -1517,7 +1564,12 @@ export function createWeekend(opts) {
       if (c.battleCooldown > 0) c.battleCooldown -= dt;
       if (ahead && ahead.status === 'running' && c.interval < 1.0 && !c.duel) race.stats.stuckTime += dt;
       if (!ahead || ahead.status !== 'running') continue;
-      if (c.duel || ahead.duel || c.defending) continue;
+      // Being attacked from behind used to stop a driver attacking the car in
+      // front. It is the commonest thing in racing — you defend into the
+      // corner and attack out of it — and in a train it meant every car in the
+      // middle was frozen: the quickest car on the road could sit there all
+      // afternoon because someone was having a look at him.
+      if (c.duel || ahead.duel) continue;
       if (c.battleCooldown > 0) continue;
       if (race.safetyCar) continue;
 
@@ -1877,9 +1929,17 @@ export function createWeekend(opts) {
       updateLateral(c, dt);
       updateDriverIntent(c, dLap);
       fuelBurn(c, dLap);
+      // Defending costs tyres. A driver holding a quicker car off is braking
+      // later than he wants into places he would rather not, and taking a line
+      // that is not the quick one — and that is how these things resolve in
+      // reality: not by the man behind finding a way past a perfect defence,
+      // but by the defence getting more expensive every lap until it cannot be
+      // paid. Without it a stubborn driver could hold a car a second a lap
+      // quicker for an entire afternoon at no cost whatever.
+      const defending = 1 + Math.min(1, c.defendEnv ?? 0) * 0.30;
       c.wear += wearPerLap(c.tyre, c.phys, c.driver, {
         mode: c.mode, dirtyAir: (c.dirtyAir ?? 0) * dirtyAirScale, wetness: weather.wetness,
-      }, abrasion) * dLap;
+      }, abrasion) * defending * dLap;
       c.tyreAge += dLap;
       rollMistake(c, dLap);
       rollChatter(c, dLap);
