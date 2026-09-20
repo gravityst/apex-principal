@@ -14,7 +14,10 @@ import { makeFacilities } from './facilities.js';
 import { seedGrid, driverSalary, staffSalary, generateStaff, STAFF_ROLES } from './personnel.js';
 import { initRival, rivalBudget } from './rivals.js';
 import { makeRng } from './rng.js';
-import { BUDGET_CAP, BASE_OPERATING, DISMISSAL_BALANCE, generateSponsorMarket, wageBill } from './finance.js';
+import {
+  BUDGET_CAP, BASE_OPERATING, DISMISSAL_BALANCE, generateSponsorMarket, wageBill,
+  sponsorRaceIncome, prizeMoney, WINTER_SHARE,
+} from './finance.js';
 import { facilityUpkeep } from './facilities.js';
 
 export const SAVE_VERSION = 4;
@@ -199,13 +202,44 @@ export function constructorsPosition(state, teamId) {
  * round three. A team may run a small overdraft — the board tolerates it, up to
  * a point (see DISMISSAL_BALANCE).
  */
+/**
+ * What the factory may spend this round.
+ *
+ * This used to offer `balance + 18` and a pace of more than twice the even
+ * rate, which meant the game recommended a number the team could not possibly
+ * pay. Follow the recommendation every round and you ended the season sixty
+ * million down, with no winter programme and no way back — and nothing
+ * anywhere said so.
+ *
+ * It now offers what the team can actually afford: the cash in hand, plus the
+ * sponsorship and prize money still to come between here and the flag, less
+ * the wages, upkeep and travel still to be paid, less a reserve so a bad
+ * season does not end in dismissal. Borrowing against the prize money is
+ * allowed — real teams do it — but only most of it, and only if the
+ * championship position holds up.
+ */
 export function roundBudget(state) {
   const p = state.player;
-  const remainingRounds = Math.max(1, state.calendar.length - state.round);
-  const capLeft = Math.max(0, BUDGET_CAP - p.seasonSpend);
-  const cashLeft = Math.max(0, p.balance + 18);       // a modest overdraft is allowed
-  const pace = Math.max(capLeft / remainingRounds * 2.2, 2);
-  return Math.round(Math.min(capLeft, cashLeft, pace) * 10) / 10;
+  const rounds = state.calendar.length;
+  const remaining = Math.max(1, rounds - state.round);
+  // The winter's share of the cap is ring-fenced. Spend the lot between March
+  // and November and you turn up in March with last year's car, which is a
+  // trap rather than a decision — every rival holds a third back.
+  const capLeft = Math.max(0, BUDGET_CAP * (1 - WINTER_SHARE) - p.seasonSpend);
+
+  const costs = seasonCosts(state);
+  const runningLeft = (costs.total / rounds) * remaining;
+  const sponsorLeft = sponsorRaceIncome(p.sponsors, rounds) * remaining;
+  // Prize money lands at the end of the year, so it is credit, not cash.
+  const position = constructorsPosition(state, state.playerTeamId);
+  const prizeToCome = prizeMoney(position) * 0.75;
+
+  const RESERVE = 12;                                 // never spend the last of it
+  const affordable = p.balance + sponsorLeft + prizeToCome - runningLeft - RESERVE;
+  // Spread it, but allow a big upgrade now rather than a trickle: a season is
+  // won by bringing a package early, not by spending evenly.
+  const pace = (affordable / remaining) * 1.7;
+  return Math.round(Math.max(0, Math.min(capLeft, affordable, pace)) * 10) / 10;
 }
 
 export function seasonCosts(state) {

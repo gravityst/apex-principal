@@ -24,6 +24,7 @@ import {
 import { makeRng, subSeed } from './rng.js';
 import {
   prizeMoney, settleSponsors, sponsorRaceIncome, generateSponsorMarket, damageCost, canSign,
+  BUDGET_CAP, WINTER_SHARE,
 } from './finance.js';
 import {
   playerTeam, pushNews, constructorsTable, driversTable, constructorsPosition,
@@ -71,7 +72,8 @@ export function runRoundDevelopment(state, allocationWeights) {
   for (const t of state.teams) {
     if (t.id === state.playerTeamId) continue;
     const season = rivalBudget(t, t.lastSeasonPosition ?? 5);
-    const perRound = season / state.calendar.length;
+    // A third of the year is held back for the winter car.
+    const perRound = season * (1 - WINTER_SHARE) / state.calendar.length;
     const res = developRival(t, perRound, rng);
     rivalReports.push({ team: t.id, report: res.report });
   }
@@ -278,13 +280,51 @@ export function endSeason(state) {
   events.push({ kind: 'regs', text: change.text });
   pushNews(state, 'regs', change.name + '. ' + change.text);
 
-  // ---- rivals do their winter --------------------------------------------
+  // ---- the winter --------------------------------------------------------
+  // The biggest single development step of the year, and the one that decides
+  // what the grid looks like in March. Everyone takes it at the same moment,
+  // funded by what they just earned — which is what makes last season's
+  // finishing position matter to next season's car.
   for (let i = 0; i < table.length; i++) {
     const t = table[i].team;
     t.lastSeasonPosition = i + 1;
     if (t.id === state.playerTeamId) continue;
+    const winter = rivalBudget(t, i + 1) * WINTER_SHARE;
+    developRival(t, winter, rng);
     const news = rivalOffseason(t, rng, i + 1);
     for (const n of news) { events.push({ kind: 'rival', text: n.text }); pushNews(state, 'rival', n.text); }
+  }
+
+  // The player's winter. Spent on the allocation set in the factory, out of
+  // the cash that is actually there once the prize money has landed — so a
+  // season that paid is a car that turns up, and a season that did not is a
+  // winter spent watching everyone else find time.
+  const winterTeam = playerTeam(state);
+  const winterCapLeft = Math.max(0, BUDGET_CAP - state.player.seasonSpend);
+  const winterCash = Math.max(0, state.player.balance + 18);
+  const winterBudget = Math.round(Math.min(winterCapLeft, winterCash, BUDGET_CAP * WINTER_SHARE) * 10) / 10;
+  let winterReport = null;
+  if (winterBudget > 0.5) {
+    const winterAlloc = allocateByWeights(winterBudget, state.player.allocation);
+    winterReport = runDevelopment(winterTeam, winterAlloc, rng);
+    spend(state, winterReport.spent, 'Winter development programme', 'rnd');
+    const gained = winterReport.report.reduce((a, r) => a + (r.gained ?? 0), 0);
+    events.push({
+      kind: 'winter',
+      text: `Your winter programme spent ${winterReport.spent.toFixed(1)}M and delivered ${gained.toFixed(1)} points of car. `
+        + 'Where it went is set by the allocation on the factory screen.',
+    });
+    pushNews(state, 'factory', `Winter development delivered ${gained.toFixed(1)} points across the car.`);
+  } else {
+    const why = winterCapLeft < 1
+      ? 'The budget cap is spent.'
+      : 'There was no money left to spend.';
+    events.push({
+      kind: 'winter',
+      text: `No winter programme. ${why} Every rival has run one, and you will `
+        + 'start the season with last year\'s car.',
+    });
+    pushNews(state, 'factory', `No winter development. ${why}`);
   }
 
   // ---- driver market -----------------------------------------------------

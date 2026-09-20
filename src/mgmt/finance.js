@@ -12,6 +12,18 @@ import { PRIZE_MONEY } from './calendar.js';
 export const BUDGET_CAP = 125;          // millions per season, on car development
 export const BASE_OPERATING = 20;       // millions per season, outside the cap
 
+/**
+ * How much of a year's development happens over the winter.
+ *
+ * In-season upgrades are worth real time, but the single biggest step any team
+ * takes is the car it turns up with in March. A season where development is
+ * spread evenly over the rounds has no winter in it at all: nobody arrives
+ * transformed, nobody arrives having got it wrong, and the order in March is
+ * the order from last November. A third of the money, spent in one go with
+ * the whole calendar still to come, is what makes a winter matter.
+ */
+export const WINTER_SHARE = 0.35;
+
 /** How many of each sponsor tier a team can carry at once. */
 export const SPONSOR_SLOTS = { title: 1, major: 2, minor: 3 };
 

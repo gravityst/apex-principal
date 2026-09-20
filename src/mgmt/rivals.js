@@ -74,12 +74,20 @@ export function initRival(team, rng) {
  * the human and put the front of the grid permanently out of reach.
  */
 export function rivalBudget(team, lastSeasonPosition = 5) {
-  const commercial = 78 + team.resources * 74;
-  const prize = 62 - (lastSeasonPosition - 1) * 5.2;
+  // Where the money comes from, in the order it matters.
+  //
+  // Finishing position used to be worth twenty-nine million and simply being
+  // born rich was worth sixteen, so a team could be comfortably funded for a
+  // decade of finishing ninth. A championship is now worth more than fifty,
+  // and the legacy advantage is a few million: what a team did last year is
+  // what pays for next year's car, which is both how the sport works and the
+  // only thing that makes a championship compound.
+  const commercial = 62 + team.resources * 30;
+  const prize = 78 - (lastSeasonPosition - 1) * 5.8;
   // A bigger operation costs more to run, which is why a works team's advantage
   // is real but nothing like as large as its turnover suggests.
-  const running = 48 + team.resources * 36;
-  return Math.max(12, Math.min(BUDGET_CAP, Math.round((commercial + prize * 0.62 - running) * 10) / 10));
+  const running = 46 + team.resources * 22;
+  return Math.max(20, Math.min(BUDGET_CAP, Math.round((commercial + prize - running) * 10) / 10));
 }
 
 /**

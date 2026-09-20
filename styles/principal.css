@@ -421,6 +421,21 @@ td.pos { font-family: var(--mono); font-weight: 700; color: var(--ink-2); width:
   .herotrack { height: 168px; }
 }
 
+/* ---- a standing alert on the hub ----
+   For the one thing that is quietly costing the player the season. */
+.alertcard {
+  background: linear-gradient(180deg, rgba(245,197,24,.10), rgba(245,197,24,.03));
+  border: 1px solid rgba(245,197,24,.36);
+  border-left: 4px solid var(--warn);
+  border-radius: 12px; padding: 15px 17px;
+  box-shadow: var(--elev-1);
+}
+.ac-hd b { font-size: var(--t-lg); font-weight: 700; color: #ffdf7a; }
+.alertcard p {
+  margin: 7px 0 13px; font-size: var(--t-md); line-height: var(--lh-snug);
+  color: var(--ink-2); max-width: 68ch;
+}
+
 /* ---- the team card ---- */
 .teamcard {
   --tc: var(--team);

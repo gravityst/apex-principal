@@ -97,15 +97,35 @@ export function allocateByWeights(millions, weights) {
  * @param rng
  * @returns per-area report for the factory screen
  */
+/**
+ * Wind tunnel time, by last season's finish.
+ *
+ * The sport's own answer to a championship that compounds: the team that won
+ * gets the least development time and the team that finished last gets the
+ * most. Without something like it the money advantage runs away — the grid
+ * here spread from nine points of car to fifteen over four seasons, and it
+ * would keep going.
+ *
+ * It does not cancel the money, and it is not meant to. A winner still ends
+ * up with the better car; it just cannot keep pulling away forever, and a
+ * team at the back has a road out that does not depend on somebody else
+ * failing.
+ */
+export function testingAllowance(lastSeasonPosition) {
+  const p = Math.max(1, Math.min(10, lastSeasonPosition || 5));
+  return 0.88 + (p - 1) * (0.28 / 9);                // P1 0.88 .. P10 1.16
+}
+
 export function runDevelopment(team, allocation, rng) {
   const report = [];
   let spent = 0;
+  const allowance = testingAllowance(team.lastSeasonPosition);
   for (const id of AREA_IDS) {
     const money = Math.max(0, allocation[id] ?? 0);
     if (money <= 0.001) continue;
     spent += money;
     const before = team.spec[id] ?? 0;
-    const exp = expectedPoints(money, before, team.facilities, team.staff, id);
+    const exp = expectedPoints(money, before, team.facilities, team.staff, id) * allowance;
     const res = resolveDelivery(exp, team.facilities, id, rng);
     const after = Math.max(0, Math.min(112, before + res.points));
     team.spec[id] = Math.round(after * 100) / 100;

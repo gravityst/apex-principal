@@ -8,6 +8,7 @@ import { getTrack } from '../mgmt/track.js';
 import { AREAS, AREA_IDS, toPhysics, specRating } from '../mgmt/carspec.js';
 import { solveLap, areaValue } from '../mgmt/laptime.js';
 import { constructorsTable, driversTable, playerTeam, roundBudget, seasonCosts } from '../mgmt/state.js';
+import { SPONSOR_SLOTS, canSign, prizeMoney } from '../mgmt/finance.js';
 import { currentRound, seasonComplete } from '../mgmt/season.js';
 import { circuitCharacter } from '../mgmt/calendar.js';
 import { doctrineName } from '../mgmt/rivals.js';
@@ -100,6 +101,42 @@ export function renderHub(app, root) {
 
   const right = [];
   const costs = seasonCosts(state);
+
+  // Money left on the table.
+  //
+  // The most common way to end a season sixty million down is to never sign a
+  // title sponsor, and nothing anywhere said so — the offers sat on the
+  // finance screen while the balance fell every round. The team's income and
+  // what is missing from it now sit on the front page, with the figure on it.
+  {
+    const p = state.player;
+    const held = p.sponsors.reduce((a, x) => a + (x.fee || 0), 0);
+    const open = [];
+    for (const [tier, slots] of Object.entries(SPONSOR_SLOTS)) {
+      const have = p.sponsors.filter((x) => x.tier === tier).length;
+      if (have < slots) open.push({ tier, free: slots - have });
+    }
+    const onOffer = p.sponsorMarket
+      .filter((o) => canSign(p.sponsors, o.tier))
+      .reduce((a, o) => Math.max(a, o.fee || 0), 0);
+    const income = held + prizeMoney(myPos);
+    const shortfall = costs.total - income;
+
+    if (open.length && onOffer > 0) {
+      // First thing on the page, above the weekend: it is worth more than the
+      // weekend is.
+      left.unshift(h('div', { class: 'alertcard' },
+        h('div', { class: 'ac-hd' }, h('b', {}, 'You are racing without a full sponsor book')),
+        h('p', {},
+          `${listOf(open.map((o) => `${o.free} ${o.tier}`))} `
+          + `${open.reduce((a, o) => a + o.free, 0) === 1 ? 'slot is' : 'slots are'} empty, and there is an offer `
+          + `worth ${money(onOffer)} a season on the table. Running the team costs ${money(costs.total)} a year; `
+          + `you have ${money(held)} of sponsorship signed`
+          + (shortfall > 0 ? ` and are ${money(shortfall)} short before a penny goes on the car.` : '.')),
+        h('div', { class: 'btnrow' },
+          h('button', { class: 'btn primary', onClick: () => app.goto('finance') }, 'Go and sign them →'))));
+    }
+  }
   // The team card. Four numbers a principal actually watches, at a size you
   // can read across the room, over a band in the team's own colour — and the
   // rest underneath where it belongs.
@@ -138,6 +175,12 @@ export function renderHub(app, root) {
 
 function fact(k, v) {
   return h('div', { class: 'stat' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, v));
+}
+
+/** "a, b and c" — a list a person would read out. */
+function listOf(parts) {
+  if (parts.length <= 1) return parts[0] || '';
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
 function bigStat(k, v, sub, cls = '') {
